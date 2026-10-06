@@ -89,17 +89,19 @@ def _begin_model_config(selected: str, provider: str) -> tuple[dict, dict]:
     return cfg, model
 
 
-def _commit_model_config(cfg: dict) -> None:
+def _commit_model_config(
+    cfg: dict, *, preserve_keys: set[tuple[str, ...]] | None = None
+) -> None:
     """Persist *cfg* and deactivate any OAuth provider."""
     from hermes_cli.auth import deactivate_provider
     from hermes_cli.config import save_config
-    save_config(cfg)
+    save_config(cfg, preserve_keys=preserve_keys)
     deactivate_provider()
 
 
 def _persist_model(selected: str, provider: str, *, base_url: str | None = None, api_mode: str | None = None,
                    drop_base_url: bool = False, drop_api_mode: bool = False, clear_creds: bool = True,
-                   finish=None) -> dict:
+                   finish=None, preserve_keys: set[tuple[str, ...]] | None = None) -> dict:
     """The standard persist step: ``_save_model_choice`` → model section with ``provider``,
     ``base_url`` then ``api_mode`` (that order is the config.yaml key order) → scrub inline
     endpoint credentials (``clear_creds``; ``drop_api_mode`` also pops ``api_mode``) →
@@ -117,7 +119,7 @@ def _persist_model(selected: str, provider: str, *, base_url: str | None = None,
         model.pop("api_mode", None)
     if finish is not None:
         finish(cfg, model)
-    _commit_model_config(cfg)
+    _commit_model_config(cfg, preserve_keys=preserve_keys)
     return model
 
 

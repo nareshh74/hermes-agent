@@ -595,40 +595,114 @@ def _model_flow_copilot(config, current_model=""):
 
 
 def _model_flow_copilot_acp(config, current_model=""):
-    """GitHub Copilot ACP flow using the local Copilot CLI."""
+    from agent.copilot_acp_launcher import (
+        resolve_copilot_acp_launch_spec,
+        resolve_launch_command,
+    )
     from hermes_cli.auth import (
-        PROVIDER_REGISTRY, get_external_process_provider_status, resolve_api_key_provider_credentials,
-        resolve_external_process_provider_credentials)
+        PROVIDER_REGISTRY, resolve_api_key_provider_credentials)
+    from providers import get_provider_profile
 
-    del config
     provider_id = "copilot-acp"
     pconfig = PROVIDER_REGISTRY[provider_id]
-    status = get_external_process_provider_status(provider_id)
-    resolved_command = status.get("resolved_command") or status.get("command") or "copilot"
-    effective_base = status.get("base_url") or pconfig.inference_base_url
-
-    _say("  GitHub Copilot ACP delegates Hermes turns to `copilot --acp`.",
-         "  Hermes currently starts its own ACP subprocess for each request.",
-         "  Hermes uses your selected model as a hint for the Copilot ACP session.",
-         f"  Command: {resolved_command}", f"  Backend marker: {effective_base}", "")
-    try:
-        creds = resolve_external_process_provider_credentials(provider_id)
-    except Exception as exc:
-        _say(f"  ⚠ {exc}", "  Set HERMES_COPILOT_ACP_COMMAND or COPILOT_CLI_PATH if Copilot CLI is installed elsewhere.")
+    profile = get_provider_profile(provider_id)
+    if profile is None:
+        print("GitHub Copilot ACP provider profile is unavailable.")
         return
-    effective_base = creds.get("base_url") or effective_base
+    try:
+        resolve_copilot_acp_launch_spec(profile, config=config)
+    except ValueError as exc:
+        print(f"  {exc}")
+        return
+    launcher_rows = [
+        "Native Copilot CLI  (copilot --acp --stdio)",
+        "Agency  (agency copilot --acp --stdio)",
+    ]
+    stored_launcher = (
+        config.get("copilot_acp", {}).get("launcher", "native")
+        if isinstance(config.get("copilot_acp", {}), dict)
+        else "native"
+    )
+    default_idx = 1 if stored_launcher == "agency" else 0
+    launcher_idx = _curses_choice(
+        "Select the Copilot ACP launcher:",
+        launcher_rows,
+        default_idx,
+    )
+    if launcher_idx is None:
+        _print_numbered(
+            "Select the Copilot ACP launcher:",
+            launcher_rows,
+            default_idx,
+        )
+        raw = _ask(
+            "  Choice [1/2]: ",
+            raw=True,
+            cancel_msg="No change.",
+        )
+        if raw is None:
+            return
+        try:
+            launcher_idx = default_idx if not raw else int(raw) - 1
+        except ValueError:
+            print("No change.")
+            return
+    if launcher_idx not in (0, 1):
+        print("No change.")
+        return
+    launcher = ("native", "agency")[launcher_idx]
+    candidate_config = dict(config)
+    candidate_config["copilot_acp"] = {
+        **config.get("copilot_acp", {}),
+        "launcher": launcher,
+    }
+    launch_spec = resolve_copilot_acp_launch_spec(
+        profile,
+        config=candidate_config,
+    )
+    resolved_command = resolve_launch_command(launch_spec)
+    if not resolved_command:
+        _say(
+            f"  Could not find the Copilot ACP launcher command '{launch_spec.command}'.",
+            "  Install it, choose the other launcher, or set an explicit "
+            "HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH override.",
+        )
+        return
+
+    effective_base = pconfig.inference_base_url
+    _say(
+        f"  GitHub Copilot ACP delegates Hermes turns to `{launch_spec.display}`.",
+        "  Hermes starts its own ACP subprocess for each request.",
+        f"  Command: {launch_spec.display}",
+        f"  Resolved command: {resolved_command}",
+        f"  Backend marker: {effective_base}",
+        "",
+    )
 
     catalog_api_key = ""
     with contextlib.suppress(Exception):
         catalog_api_key = resolve_api_key_provider_credentials("copilot").get("api_key", "")
     _catalog, catalog_ids, _normalize = _copilot_catalog(catalog_api_key)
+    live_ids = profile.fetch_models(launch_spec=launch_spec) or []
+    available_ids = list(dict.fromkeys([*live_ids, *catalog_ids]))
     selected = _pick_model_or_prompt(
-        _copilot_model_list(catalog_ids), "Model name: ", current_model=_normalize(current_model),
+        _copilot_model_list(available_ids), "Model name: ", current_model=_normalize(current_model),
         confirm_provider=provider_id, confirm_base_url=effective_base, confirm_api_key=catalog_api_key)
     if selected:
         selected = _normalize(selected)
-    _finish_model(selected, provider_id, f"Default model set to: {selected} (via {pconfig.name})",
-                  base_url=effective_base, api_mode="chat_completions")
+
+    def persist_launcher(cfg, _model):
+        cfg.setdefault("copilot_acp", {})["launcher"] = launcher
+
+    _finish_model(
+        selected,
+        provider_id,
+        f"Default model set to: {selected} (via {pconfig.name})",
+        base_url=effective_base,
+        api_mode="chat_completions",
+        finish=persist_launcher,
+        preserve_keys={("copilot_acp", "launcher")},
+    )
 
 
 def _model_flow_kimi(config, current_model=""):

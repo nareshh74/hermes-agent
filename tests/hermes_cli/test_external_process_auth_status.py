@@ -211,6 +211,11 @@ def test_explicit_filter_drops_unverified_external_process_row(tmp_path, monkeyp
 def test_cli_command_reflects_configured_executable(tmp_path, monkeypatch, _clean_copilot_env):
     from hermes_cli.web_server_oauth import _external_process_cli_command
 
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        "copilot_acp:\n  launcher: agency\n",
+        encoding="utf-8",
+    )
     fake = tmp_path / ("copilot.exe" if os.name == "nt" else "copilot")
     fake.write_text("", encoding="utf-8")
     fake.chmod(0o755)
@@ -219,6 +224,22 @@ def test_cli_command_reflects_configured_executable(tmp_path, monkeypatch, _clea
     rendered = _external_process_cli_command("copilot-acp", "copilot login")
 
     assert rendered == f"{fake} login"
+
+
+def test_cli_command_reflects_configured_agency_launcher(
+    tmp_path, monkeypatch, _clean_copilot_env
+):
+    from hermes_cli.web_server_oauth import _external_process_cli_command
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text(
+        "copilot_acp:\n  launcher: agency\n",
+        encoding="utf-8",
+    )
+
+    rendered = _external_process_cli_command("copilot-acp", "copilot login")
+
+    assert rendered == "agency copilot login"
 
 
 def test_cli_command_untouched_for_non_external_providers(_clean_copilot_env):

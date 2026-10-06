@@ -17,7 +17,7 @@ You need at least one way to connect to an LLM. Use `hermes model` to switch pro
 | **Nous Portal** | `hermes model` (OAuth, subscription-based) |
 | **OpenAI Codex** | `hermes model` → **ChatGPT or Codex Subscription** (ChatGPT OAuth, uses Codex models) |
 | **GitHub Copilot** | `hermes model` (OAuth device code flow, `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth token`) |
-| **GitHub Copilot ACP** | `hermes model` (spawns local `copilot --acp --stdio`) |
+| **GitHub Copilot ACP** | `hermes model` (spawns `copilot --acp --stdio` or `agency copilot --acp --stdio`) |
 | **Anthropic** | `hermes model` (Claude Max + extra usage credits via OAuth; also supports Anthropic API key or manual setup-token — see note below) |
 | **OpenRouter** | `OPENROUTER_API_KEY` in `~/.hermes/.env`, or `hermes auth add openrouter --type oauth` (browser login via OpenRouter's PKCE flow; stores a key in the credential pool) |
 | **Ramp Router** | `RAMP_ROUTER_API_KEY` in `~/.hermes/.env` (provider: `router`; aliases: `ramp-router`, `ramp`, `router.com`; Responses-native gateway, live account-scoped catalog) |
@@ -252,25 +252,43 @@ Some older community proxies use `api.github.com/copilot_internal/v2/token` exch
 
 **API routing**: GPT-5+ models (except `gpt-5-mini`) automatically use the Responses API. All other models (GPT-4o, Claude, Gemini, etc.) use Chat Completions. Models are auto-detected from the live Copilot catalog.
 
-**`copilot-acp` — Copilot ACP agent backend**. Spawns the local Copilot CLI as a subprocess:
+**`copilot-acp` — Copilot ACP agent backend**. Spawns either the native Copilot CLI or Agency as a subprocess:
 
 ```bash
 hermes chat --provider copilot-acp --model copilot-acp
-# Requires the GitHub Copilot CLI in PATH and an existing `copilot login` session
+# The launcher selected by `hermes model` must be available in PATH
 ```
 
-**Permanent config:**
+The launcher choice in `config.yaml` is `native` by default:
+
 ```yaml
+copilot_acp:
+  launcher: native
+
 model:
-  provider: "copilot"
-  default: "gpt-5.4"
+  provider: copilot-acp
+  default: gpt-5.4
 ```
+
+The native launcher runs `copilot --acp --stdio`. The Agency launcher runs
+`agency copilot --acp --stdio`. Hermes does not fall back to the native
+launcher when Agency is selected but unavailable.
+
+`HERMES_COPILOT_ACP_COMMAND`, `COPILOT_CLI_PATH`, and
+`HERMES_COPILOT_ACP_ARGS` override the stored launcher choice. If any override
+is set, fields without an override use the native Copilot command or arguments.
+These variables preserve existing custom ACP transports.
 
 | Environment variable | Description |
 |---------------------|-------------|
 | `COPILOT_GITHUB_TOKEN` | GitHub token for Copilot API (first priority) |
 | `HERMES_COPILOT_ACP_COMMAND` | Override the Copilot CLI binary path (default: `copilot`) |
+| `COPILOT_CLI_PATH` | Lower-priority override for the Copilot CLI binary path |
 | `HERMES_COPILOT_ACP_ARGS` | Override ACP args (default: `--acp --stdio`) |
+
+The direct `copilot` provider still calls the Copilot HTTP API. The Agency
+launcher applies only to `copilot-acp`. Agency authentication and a full
+Agency-backed prompt are not verified by Hermes setup.
 
 ### First-Class API-Key Providers
 

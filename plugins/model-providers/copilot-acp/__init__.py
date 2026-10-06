@@ -22,7 +22,8 @@ class CopilotACPProfile(ProviderProfile):
         return CopilotACPClient(**client_kwargs)
 
     def fetch_models(
-        self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 15.0
+        self, *, api_key: str | None = None, base_url: str | None = None,
+        timeout: float = 15.0, launch_spec=None,
     ) -> list[str] | None:
         """Enabled models advertised by a short-lived signed-in ACP session (``session/new``).
 
@@ -34,12 +35,19 @@ class CopilotACPProfile(ProviderProfile):
         from hermes_cli.auth import resolve_external_process_provider_credentials
 
         try:
-            creds = resolve_external_process_provider_credentials(self.name)
-            if not str(creds.get("base_url") or "").startswith("acp://"):
-                return None
-            client = self.create_client(
-                api_key=creds.get("api_key"), base_url=creds.get("base_url"),
-                command=creds.get("command"), args=creds.get("args"))
+            if launch_spec is None:
+                creds = resolve_external_process_provider_credentials(self.name)
+                if not str(creds.get("base_url") or "").startswith("acp://"):
+                    return None
+                client = self.create_client(
+                    api_key=creds.get("api_key"), base_url=creds.get("base_url"),
+                    command=creds.get("command"), args=creds.get("args"))
+            else:
+                client = self.create_client(
+                    api_key="copilot-acp",
+                    base_url=self.base_url,
+                    launch_spec=launch_spec,
+                )
             return client.list_models(timeout_seconds=timeout) or None
         except Exception:
             # Missing CLI (AuthError), refused --acp / failed spawn (RuntimeError), probe

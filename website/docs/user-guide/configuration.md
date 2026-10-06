@@ -67,6 +67,25 @@ Settings are resolved in this order (highest priority first):
 Secrets (API keys, bot tokens, passwords) go in `.env`. Everything else (model, terminal backend, compression settings, memory limits, toolsets) goes in `config.yaml`. When both are set, `config.yaml` wins for non-secret settings.
 :::
 
+### Copilot ACP launcher
+
+`copilot_acp.launcher` selects the process used by the `copilot-acp` provider:
+
+```yaml
+copilot_acp:
+  launcher: native
+```
+
+`native` is the default and runs `copilot --acp --stdio`. `agency` runs
+`agency copilot --acp --stdio`. An invalid value stops launcher resolution
+with an error. Hermes does not replace a selected Agency launcher with the
+native launcher.
+
+The existing `HERMES_COPILOT_ACP_COMMAND`, `COPILOT_CLI_PATH`, and
+`HERMES_COPILOT_ACP_ARGS` environment overrides take precedence over this
+setting. If any override is set, unspecified fields come from the native
+Copilot launch instead of the stored launcher.
+
 :::tip Org deployments
 An administrator can pin specific config and secret values that a standard user
 cannot override, via a system-level managed directory. See

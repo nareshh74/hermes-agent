@@ -128,6 +128,9 @@ def _external_process_cli_command(provider_id: str, default: str) -> str:
         command = str(status.get("command") or "").strip()
         if command:
             parts = default.split(" ", 1)
+            args = status.get("args") or ()
+            if args and args[0] == parts[0]:
+                command = f"{command} {args[0]}"
             tail = f" {parts[1]}" if len(parts) > 1 else ""
             return f"{command}{tail}"
     except Exception:

@@ -1,9 +1,3 @@
-"""OpenAI-compatible shim that forwards Hermes requests to `copilot --acp`.
-
-Each request starts a short-lived ACP session, sends the formatted conversation
-as one prompt, collects text chunks, and returns the minimal OpenAI-client shape.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -12,7 +6,6 @@ import logging
 import os
 import queue
 import re
-import shlex
 import subprocess
 import tempfile
 import threading
@@ -28,6 +21,11 @@ from agent.acp_openai_bridge import (
     extract_tool_calls_from_text as _extract_tool_calls_from_text,
     render_tool_bridge_sections as _render_tool_bridge_sections,
 )
+from agent.copilot_acp_launcher import (
+    CopilotACPLaunchSpec,
+    probe_acp_support,
+    resolve_copilot_acp_launch_spec,
+)
 from agent.file_safety import (
     get_nt_namespace_error, get_read_block_error, get_write_denied_error, is_write_approval_required)
 from agent.redact import redact_sensitive_text
@@ -41,9 +39,6 @@ _DEFAULT_TIMEOUT_SECONDS = 900.0
 _DEPRECATION_REQUIRED = ("gh-copilot",)
 _DEPRECATION_MARKERS = ("has been deprecated", "no commands will be executed")
 _ROLE_LABELS = {"system": "System", "user": "User", "assistant": "Assistant", "tool": "Tool", "context": "Context"}
-# Probe verdicts per binary path (~50ms --help paid once per process). Only definitive
-# True/False is cached, so a CLI installed mid-session is picked up.
-_ACP_PROBE_CACHE: dict[str, bool] = {}
 _PROMPT_PREAMBLE = (
     "You are being used as the active ACP agent backend for Hermes.",
     "Use ACP capabilities to complete tasks.",
@@ -70,42 +65,6 @@ def _is_gh_copilot_deprecation_message(stderr_text: str) -> bool:
     """True iff stderr looks like the deprecated gh-copilot extension's banner."""
     lower = stderr_text.lower()
     return any(req in lower for req in _DEPRECATION_REQUIRED) and any(m in lower for m in _DEPRECATION_MARKERS)
-
-
-def _resolve_command() -> str:
-    return os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip() or os.getenv("COPILOT_CLI_PATH", "").strip() or "copilot"
-
-
-def _resolve_args() -> list[str]:
-    return shlex.split(os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()) or ["--acp", "--stdio"]
-
-
-def _acp_supported(command: str, args: list[str]) -> bool | None:
-    """Tri-state ``--acp`` probe (a CLI without the flag exits 1 and the parent would wait the
-    full child timeout for stdout that never arrives). True = help advertises --acp; False =
-    help ran cleanly without it (caller fast-fails); None = inconclusive (binary missing /
-    --help failed → normal spawn error). Skipped when ``--acp`` is not in ``args`` (custom transport)."""
-    if "--acp" not in args:
-        return True
-    if (cached := _ACP_PROBE_CACHE.get(command)) is not None:
-        return cached
-    try:
-        probe = subprocess.run(
-            [command, "--help"],
-            # Explicit codec because text=True alone decodes with the
-            # locale default and crashes on non-ASCII help text under
-            # GBK/CP932 locales.
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=5,
-            stdin=subprocess.DEVNULL,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    if probe.returncode != 0:
-        return None
-    # ``--acp`` as a flag token; tolerate spacing and ``[--acp]`` variants.
-    verdict = _ACP_PROBE_CACHE[command] = bool(re.search(r"(?:^|[\s\[])--acp(?:[\s=\],]|$)", probe.stdout, re.MULTILINE))
-    return verdict
 
 
 def _resolve_home_dir() -> str:
@@ -286,12 +245,16 @@ class CopilotACPClient:
     def __init__(
         self, *, api_key: str | None = None, base_url: str | None = None, default_headers: dict[str, str] | None = None,
         acp_command: str | None = None, acp_args: list[str] | None = None, acp_cwd: str | None = None, command: str | None = None,
-        args: list[str] | None = None, **_: Any,
+        args: list[str] | None = None, launch_spec: CopilotACPLaunchSpec | None = None, **_: Any,
     ):
         self.api_key, self.base_url = api_key or "copilot-acp", base_url or ACP_MARKER_BASE_URL
         self._default_headers = dict(default_headers or {})
-        self._acp_command = acp_command or command or _resolve_command()
-        self._acp_args = list(acp_args or args or _resolve_args())
+        self._launch_spec = launch_spec or resolve_copilot_acp_launch_spec(
+            command=acp_command or command,
+            args=acp_args or args,
+        )
+        self._acp_command = self._launch_spec.command
+        self._acp_args = list(self._launch_spec.args)
         self._acp_cwd = str(Path(acp_cwd or os.getcwd()).resolve())
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create_chat_completion))
         self.is_closed = False
@@ -349,7 +312,7 @@ class CopilotACPClient:
     def _spawn(self) -> subprocess.Popen[str]:
         # Fast-fail when the CLI rejects --acp (else the parent waits the full child timeout for stdout that
         # never arrives). ``None`` falls through to the spawn's established start error.
-        if _acp_supported(self._acp_command, self._acp_args) is False:
+        if probe_acp_support(self._launch_spec) is False:
             preview = " ".join(self._acp_args[:3]) if self._acp_args else "(none)"
             raise RuntimeError(
                 f"ACP transport not supported by '{self._acp_command}': `{preview}` is rejected as an unknown option. This "
@@ -363,13 +326,20 @@ class CopilotACPClient:
             # Hide the console the CLI child would otherwise flash on Windows (#56747). Hide-only — stdio
             # pipes stay intact for the ACP wire.
             proc = subprocess.Popen(
-                [self._acp_command] + self._acp_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                list(self._launch_spec.spawn_argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding='utf-8', errors='replace', bufsize=1, cwd=self._acp_cwd, env=_build_subprocess_env(),
                 creationflags=windows_hide_flags(),
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"Could not start Copilot ACP command '{self._acp_command}'. Install GitHub Copilot CLI or set "
-                               "HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH.") from exc
+            install_hint = (
+                "Install Agency or set copilot_acp.launcher to native"
+                if self._launch_spec.kind == "agency"
+                else "Install GitHub Copilot CLI"
+            )
+            raise RuntimeError(
+                f"Could not start Copilot ACP command '{self._acp_command}'. "
+                f"{install_hint}, or set HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH."
+            ) from exc
         if proc.stdin is None or proc.stdout is None:
             proc.kill()
             raise RuntimeError("Copilot ACP process did not expose stdin/stdout pipes.")

@@ -1,6 +1,8 @@
 """Tests for GitHub Copilot entries shown in the /model picker."""
 
 import os
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -92,10 +94,9 @@ _ACP_CREDS = {"api_key": "copilot-acp", "base_url": "acp://copilot", "command": 
 
 @pytest.fixture()
 def _fresh_acp_memo(monkeypatch):
-    monkeypatch.setattr(models, "_copilot_acp_session_memo", None)
+    monkeypatch.setattr(models, "_copilot_acp_session_memo", {})
     yield
-    # Don't leak a memoized (possibly failed) probe into other tests in this process.
-    monkeypatch.setattr(models, "_copilot_acp_session_memo", None)
+    monkeypatch.setattr(models, "_copilot_acp_session_memo", {})
 
 
 @pytest.mark.parametrize(
@@ -120,6 +121,23 @@ def test_copilot_acp_catalog_prefers_authenticated_session(
     assert github.called is bool(github_token)
 
 
+@pytest.mark.parametrize(
+    ("github_token", "github_models", "expected"),
+    [
+        ("catalog-token", ["api-model"], ["api-model"]),
+        ("", [], models._PROVIDER_MODELS["copilot"]),
+    ],
+    ids=["github-catalog", "curated-catalog"],
+)
+def test_copilot_acp_missing_profile_uses_catalog_fallback(
+    _fresh_acp_memo, monkeypatch, github_token, github_models, expected
+):
+    monkeypatch.setattr("providers.get_provider_profile", lambda _provider: None)
+    with patch("hermes_cli.models._resolve_copilot_catalog_api_key", return_value=github_token), \
+         patch("hermes_cli.models._fetch_github_models", return_value=github_models):
+        assert provider_model_ids("copilot-acp", force_refresh=True) == expected
+
+
 def test_copilot_acp_session_probe_is_memoized_across_model_switch_validation(_fresh_acp_memo):
     """``/model`` validation reads the catalog uncached on every switch; each miss spawns the CLI.
     A run of switches must pay one probe, and a failed probe must not be retried per switch."""
@@ -134,7 +152,7 @@ def test_copilot_acp_session_probe_is_memoized_across_model_switch_validation(_f
             assert verdict["accepted"] and verdict["recognized"]
     assert list_models.call_count == 1
 
-    models._copilot_acp_session_memo = None  # (teardown in _fresh_acp_memo restores it)
+    models._copilot_acp_session_memo.clear()
     with patch("hermes_cli.auth.resolve_external_process_provider_credentials", return_value=_ACP_CREDS), \
          patch("agent.copilot_acp_client.CopilotACPClient.list_models", side_effect=RuntimeError("not signed in")) as list_models, \
          patch("hermes_cli.models._resolve_copilot_catalog_api_key", return_value=""), \
@@ -142,3 +160,104 @@ def test_copilot_acp_session_probe_is_memoized_across_model_switch_validation(_f
         for _ in range(3):
             provider_model_ids("copilot-acp")
     assert list_models.call_count == 1
+
+
+def test_copilot_acp_session_memo_isolated_by_profile_and_spawn_argv(
+    tmp_path, monkeypatch, _fresh_acp_memo
+):
+    from agent.copilot_acp_launcher import resolve_copilot_acp_launch_spec
+    from agent.secret_scope import (
+        reset_secret_scope,
+        set_multiplex_active,
+        set_secret_scope,
+    )
+    from hermes_constants import (
+        get_hermes_home,
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+
+    profile = SimpleNamespace(
+        process_command="copilot",
+        process_args=("--acp", "--stdio"),
+        process_command_env_vars=(
+            "HERMES_COPILOT_ACP_COMMAND",
+            "COPILOT_CLI_PATH",
+        ),
+        process_args_env_var="HERMES_COPILOT_ACP_ARGS",
+    )
+
+    def fetch_models(*, launch_spec=None):
+        launch = launch_spec or resolve_copilot_acp_launch_spec(profile)
+        return [f"{get_hermes_home().name}:{launch.display}"]
+
+    profile.fetch_models = fetch_models
+    monkeypatch.setattr(
+        "providers.get_provider_profile",
+        lambda provider: profile if provider == "copilot-acp" else None,
+    )
+
+    homes = {}
+    for name in ("a", "b"):
+        home = tmp_path / name
+        home.mkdir()
+        (home / "config.yaml").write_text(
+            "copilot_acp:\n  launcher: native\n",
+            encoding="utf-8",
+        )
+        homes[name] = home
+
+    def discover(home: Path):
+        home_token = set_hermes_home_override(home)
+        secret_token = set_secret_scope({}, profile_home=str(home))
+        try:
+            return models._copilot_acp_session_models(False)
+        finally:
+            reset_secret_scope(secret_token)
+            reset_hermes_home_override(home_token)
+
+    set_multiplex_active(True)
+    try:
+        assert discover(homes["a"]) == ["a:copilot --acp --stdio"]
+        assert discover(homes["b"]) == ["b:copilot --acp --stdio"]
+        (homes["a"] / "config.yaml").write_text(
+            "copilot_acp:\n  launcher: agency\n",
+            encoding="utf-8",
+        )
+        assert discover(homes["a"]) == [
+            "a:agency copilot --acp --stdio"
+        ]
+        (homes["a"] / "config.yaml").write_text(
+            "copilot_acp:\n  launcher: native\n",
+            encoding="utf-8",
+        )
+        assert discover(homes["a"]) == ["a:copilot --acp --stdio"]
+    finally:
+        set_multiplex_active(False)
+
+
+def test_copilot_acp_cache_fingerprint_tracks_effective_launcher(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    for name in (
+        "HERMES_COPILOT_ACP_COMMAND",
+        "COPILOT_CLI_PATH",
+        "HERMES_COPILOT_ACP_ARGS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config_path = home / "config.yaml"
+    config_path.write_text(
+        "copilot_acp:\n  launcher: native\n",
+        encoding="utf-8",
+    )
+    native = models._credential_fingerprint("copilot-acp")
+    config_path.write_text(
+        "copilot_acp:\n  launcher: agency\n",
+        encoding="utf-8",
+    )
+
+    assert models._credential_fingerprint("copilot-acp") != native
