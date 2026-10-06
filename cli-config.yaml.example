@@ -69,6 +69,11 @@ plugins:
 # =============================================================================
 # Model Configuration
 # =============================================================================
+# Copilot ACP launcher. "native" runs `copilot --acp --stdio`.
+# Set to "agency" to run `agency copilot --acp --stdio`.
+copilot_acp:
+  launcher: "native"
+
 model:
   # Default model to use (can be overridden with --model flag)
   # Both "default" and "model" work as the key name here.

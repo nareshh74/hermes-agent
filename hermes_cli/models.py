@@ -1425,7 +1425,10 @@ def _codex_catalog(normalized: str, force_refresh: bool) -> list[str]:
 
 _COPILOT_ACP_SESSION_MEMO_TTL = 300.0  # 5 min; SWR disk cache handles the rest
 _COPILOT_ACP_SESSION_FAIL_TTL = 30.0  # failed probes re-probe quickly so a fresh CLI login is picked up
-_copilot_acp_session_memo: Optional[tuple[float, float, Optional[list[str]]]] = None  # (at, ttl, models)
+_copilot_acp_session_memo: dict[
+    tuple[str, tuple[str, ...]],
+    tuple[float, float, Optional[list[str]]],
+] = {}
 
 
 def _copilot_acp_session_models(force_refresh: bool) -> Optional[list[str]]:
@@ -1435,19 +1438,34 @@ def _copilot_acp_session_models(force_refresh: bool) -> Optional[list[str]]:
     probe timeout), so without the memo every switch paid a subprocess. A failed probe is
     memoized much more briefly so a user who signs in to the CLI right after a miss is picked up
     on the next switch (or immediately via ``/model --refresh``, which clears this memo)."""
-    global _copilot_acp_session_memo
-    now = time.monotonic()
-    memo = _copilot_acp_session_memo
-    if not force_refresh and memo is not None and now - memo[0] < memo[1]:
-        return memo[2]
+    from agent.copilot_acp_launcher import resolve_copilot_acp_launch_spec
+    from hermes_constants import hermes_home_key
     from providers import get_provider_profile
 
+    profile = get_provider_profile("copilot-acp")
+    if profile is None:
+        logger.debug("copilot-acp session model discovery skipped: provider profile unavailable")
+        return None
     try:
-        live = get_provider_profile("copilot-acp").fetch_models() or None
+        launch_spec = resolve_copilot_acp_launch_spec(profile)
+    except Exception:
+        logger.debug("copilot-acp session model discovery failed", exc_info=True)
+        return None
+    cache_key = (hermes_home_key(), launch_spec.spawn_argv)
+    now = time.monotonic()
+    memo = _copilot_acp_session_memo.get(cache_key)
+    if not force_refresh and memo is not None and now - memo[0] < memo[1]:
+        return memo[2]
+    try:
+        live = profile.fetch_models(launch_spec=launch_spec) or None
     except Exception:
         logger.debug("copilot-acp session model discovery failed", exc_info=True)
         live = None
-    _copilot_acp_session_memo = (now, _COPILOT_ACP_SESSION_MEMO_TTL if live else _COPILOT_ACP_SESSION_FAIL_TTL, live)
+    _copilot_acp_session_memo[cache_key] = (
+        now,
+        _COPILOT_ACP_SESSION_MEMO_TTL if live else _COPILOT_ACP_SESSION_FAIL_TTL,
+        live,
+    )
     return live
 
 
@@ -1978,9 +1996,23 @@ def _credential_fingerprint(provider: str) -> str:
         from providers import get_provider_profile
         profile = get_provider_profile(provider)
         if profile is not None and profile.auth_type == "external_process":
-            for ev in (*profile.process_command_env_vars, profile.process_args_env_var):
-                if ev:
-                    parts.append(f"{ev}={os.environ.get(ev, '')}")
+            if provider == "copilot-acp":
+                from agent.copilot_acp_launcher import (
+                    resolve_copilot_acp_launch_spec,
+                )
+
+                launch = resolve_copilot_acp_launch_spec(profile)
+                parts.append(
+                    "effective_spawn_argv="
+                    + json.dumps(launch.spawn_argv)
+                )
+            else:
+                for ev in (
+                    *profile.process_command_env_vars,
+                    profile.process_args_env_var,
+                ):
+                    if ev:
+                        parts.append(f"{ev}={os.environ.get(ev, '')}")
     except Exception:
         pass
 
@@ -2180,8 +2212,7 @@ def clear_provider_models_cache(provider: Optional[str] = None) -> None:
         # A fresh copilot-acp CLI login must be visible to the next /model switch (this helper is
         # what ``--refresh`` runs): don't let the 5-min session memo (or its failure memo) serve
         # a stale signed-out probe past an explicit refresh.
-        global _copilot_acp_session_memo
-        _copilot_acp_session_memo = None
+        _copilot_acp_session_memo.clear()
         if provider is None:
             path = _provider_models_cache_path()
             if path.exists():

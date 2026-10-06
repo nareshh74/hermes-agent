@@ -46,7 +46,7 @@ register_provider(
 def fake_cli(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name in ("acme-cli", "copilot", "custom-acme"):
+    for name in ("acme-cli", "agency", "copilot", "custom-acme"):
         exe = bindir / (name + ".exe" if os.name == "nt" else name)
         exe.write_text("#!/bin/sh\nexit 0\n")
         exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
@@ -86,3 +86,30 @@ def test_copilot_acp_launch_details_are_unchanged(fake_cli, monkeypatch):
     monkeypatch.setenv("COPILOT_CLI_PATH", str(fake_cli / ("custom-acme.exe" if os.name == "nt" else "custom-acme")))
     assert resolve_external_process_provider_credentials("copilot-acp")["command"] == str(fake_cli / ("custom-acme.exe" if os.name == "nt" else "custom-acme"))
     assert resolve_runtime_provider(requested="copilot-acp", target_model="x")["base_url"] == "acp://copilot"
+
+
+def test_copilot_acp_agency_launcher_resolves_through_runtime(
+    fake_cli, monkeypatch, tmp_path
+):
+    from hermes_cli.auth import resolve_external_process_provider_credentials
+
+    home = tmp_path / "hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text(
+        "copilot_acp:\n  launcher: agency\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    for name in (
+        "HERMES_COPILOT_ACP_COMMAND",
+        "COPILOT_CLI_PATH",
+        "HERMES_COPILOT_ACP_ARGS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    creds = resolve_external_process_provider_credentials("copilot-acp")
+
+    assert Path(creds["command"]) == fake_cli / (
+        "agency.exe" if os.name == "nt" else "agency"
+    )
+    assert creds["args"] == ["copilot", "--acp", "--stdio"]

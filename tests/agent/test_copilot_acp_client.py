@@ -217,7 +217,7 @@ def test_run_prompt_preserves_real_home_when_profile_home_available(monkeypatch,
     # Hermeticity: the --acp support probe (PR #87308) calls subprocess.run
     # before Popen; stub it inconclusive so no real CLI on the host box can
     # flip the resolution this test asserts.
-    with _patch("agent.copilot_acp_client.subprocess.run", side_effect=FileNotFoundError):
+    with _patch("agent.copilot_acp_launcher.subprocess.run", side_effect=FileNotFoundError):
         with _patch("agent.copilot_acp_client.subprocess.Popen", side_effect=_fake_popen_capture(captured)):
             with pytest.raises(RuntimeError, match="Could not start Copilot ACP command"):
                 client._run_prompt("hello", timeout_seconds=1)
@@ -236,7 +236,7 @@ def test_run_prompt_passes_home_when_parent_env_is_clean(monkeypatch, tmp_path):
     # Hermeticity: the --acp support probe (PR #87308) calls subprocess.run
     # before Popen; stub it inconclusive so no real CLI on the host box can
     # flip the resolution this test asserts.
-    with _patch("agent.copilot_acp_client.subprocess.run", side_effect=FileNotFoundError):
+    with _patch("agent.copilot_acp_launcher.subprocess.run", side_effect=FileNotFoundError):
         with _patch("agent.copilot_acp_client.subprocess.Popen", side_effect=_fake_popen_capture(captured)):
             with pytest.raises(RuntimeError, match="Could not start Copilot ACP command"):
                 client._run_prompt("hello", timeout_seconds=1)
@@ -249,7 +249,7 @@ def test_run_prompt_passes_home_when_parent_env_is_clean(monkeypatch, tmp_path):
 
 import subprocess as _subprocess
 
-from agent.copilot_acp_client import _ACP_PROBE_CACHE, _acp_supported
+from agent.copilot_acp_launcher import _ACP_PROBE_CACHE, probe_acp_support
 
 
 @pytest.fixture(autouse=True)
@@ -265,16 +265,16 @@ def _completed(returncode=0, stdout=""):
 
 def test_probe_true_when_help_advertises_acp():
     with _patch(
-        "agent.copilot_acp_client.subprocess.run",
+        "agent.copilot_acp_launcher.subprocess.run",
         return_value=_completed(stdout="Usage: copilot [--acp] [--stdio]"),
     ):
-        assert _acp_supported("copilot", ["--acp", "--stdio"]) is True
+        assert probe_acp_support(_make_home_client(Path("/tmp"))._launch_spec) is True
 
 
 def test_probe_false_when_help_lacks_acp_and_run_prompt_fast_fails(tmp_path):
     client = _make_home_client(tmp_path)
     with _patch(
-        "agent.copilot_acp_client.subprocess.run",
+        "agent.copilot_acp_launcher.subprocess.run",
         return_value=_completed(stdout="Usage: claude [--print] [--model]"),
     ):
         with pytest.raises(RuntimeError, match="ACP transport not supported"):
@@ -285,7 +285,7 @@ def test_probe_inconclusive_falls_through_to_spawn_error(tmp_path):
     """Missing binary: probe must NOT mask the established spawn error."""
     client = _make_home_client(tmp_path)
     with _patch(
-        "agent.copilot_acp_client.subprocess.run",
+        "agent.copilot_acp_launcher.subprocess.run",
         side_effect=FileNotFoundError("copilot not found"),
     ):
         with _patch(
@@ -301,8 +301,13 @@ def test_probe_inconclusive_falls_through_to_spawn_error(tmp_path):
 
 
 def test_probe_skipped_for_custom_args_without_acp():
-    with _patch("agent.copilot_acp_client.subprocess.run") as run_mock:
-        assert _acp_supported("mycli", ["--custom-transport"]) is True
+    client = CopilotACPClient(
+        command="mycli",
+        args=["--custom-transport"],
+        acp_cwd="/tmp",
+    )
+    with _patch("agent.copilot_acp_launcher.subprocess.run") as run_mock:
+        assert probe_acp_support(client._launch_spec) is True
     run_mock.assert_not_called()
 
 
