@@ -259,6 +259,13 @@ class CLILoopsMixin:
         # A truthy result means the process is relaunching — leave the REPL.
         return not self._handle_update_command()
 
+    def _cmd_restart(self, cmd_original: str) -> bool:
+        # Leave the REPL; run() re-launches `hermes --resume <id>` after terminal cleanup.
+        # Profile (HERMES_HOME env) and cwd are inherited by the new process.
+        # An empty session has no DB row to resume yet, so just start fresh.
+        self._pending_relaunch = ["--resume", self.session_id] if self.conversation_history else []
+        return False
+
     def _cmd_version(self, cmd_original: str):
         from hermes_cli.main import _print_version_info
         _print_version_info(check_updates=True)

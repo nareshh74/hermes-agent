@@ -154,6 +154,22 @@ export const coreCommands: SlashCommand[] = [
   },
 
   {
+    help: 'restart this session in a fresh process (same session id)',
+    name: 'restart',
+    run: (_arg, ctx) => {
+      if (DASHBOARD_TUI_MODE) {
+        ctx.transcript.sys(t('slashCmd.core.quit.dashboardDisabled'))
+
+        return
+      }
+
+      ctx.transcript.sys(t('slashCmd.core.restart.exiting'))
+      // Exit code 43 signals the Python wrapper to relaunch with --resume <current session>.
+      setTimeout(() => ctx.session.dieWithCode(43), 100)
+    }
+  },
+
+  {
     aliases: ['scroll'],
     help: 'set mouse tracking preset [on|off|toggle|wheel|buttons|all]',
     name: 'mouse',

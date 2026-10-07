@@ -16,6 +16,9 @@ export const slashCmdCoreEn = {
     quit: {
       dashboardDisabled: 'exit is disabled in hosted dashboard chat — use /new to start a fresh session'
     },
+    restart: {
+      exiting: 'restarting session...'
+    },
     update: {
       dashboardDisabled: 'update is disabled in hosted dashboard chat — the hosted environment is managed separately',
       exiting: 'exiting TUI to run update...'

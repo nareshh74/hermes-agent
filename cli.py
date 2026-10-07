@@ -1145,6 +1145,7 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
         "statusbar": ("_cmd_statusbar", True), "verbose": ("_toggle_verbose", False), "yolo": ("_toggle_yolo", False),
         "compress": ("_manual_compress", True), "subscription": ("_show_subscription", False),
         "topup": ("_show_billing", True), "insights": ("_show_insights", True), "update": ("_cmd_update", True),
+        "restart": ("_cmd_restart", True),
         "version": ("_cmd_version", True), "paste": ("_handle_paste_command", False), "reload": ("_cmd_reload", True),
         "reload-mcp": ("_confirm_and_reload_mcp", True), "reload-skills": ("_cmd_reload_skills", True),
         "plugins": ("_cmd_plugins", True), "stop": ("_handle_stop_command", False),
@@ -1493,11 +1494,12 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
             _release_paints()
             self._tui_shutdown()
 
-        # /update relaunch happens here, after prompt_toolkit restored terminal modes, on the
+        # /update and /restart relaunch happen here, after prompt_toolkit restored terminal modes, on the
         # main thread (the process_loop thread would skip cleanup / only exit itself on Windows).
-        if self._pending_relaunch:
+        if self._pending_relaunch is not None:
             from hermes_cli.relaunch import relaunch
-            relaunch(self._pending_relaunch, preserve_inherited=False)
+            # /restart keeps --tui/--model/... ; /update must not leak them into the subcommand.
+            relaunch(self._pending_relaunch, preserve_inherited=self._pending_relaunch != ["update"])
 
 
 def _build_cli_from_args(model, toolsets, provider, reasoning, api_key, base_url, max_turns, run_budget, verbose, compact, resume, checkpoints, pass_session_id, ignore_rules, skills):

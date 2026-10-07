@@ -776,6 +776,7 @@
   "slashCmd.core.queue.queued",
   "slashCmd.core.quit.dashboardDisabled",
   "slashCmd.core.redraw.done",
+  "slashCmd.core.restart.exiting",
   "slashCmd.core.retry.nothing",
   "slashCmd.core.save.failed",
   "slashCmd.core.save.noActiveSession",
