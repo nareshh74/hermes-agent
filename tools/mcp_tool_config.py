@@ -538,6 +538,55 @@ def _portable_mcp_servers(safe_servers: Dict[str, dict]) -> None:
         logger.debug("Failed to load portable MCP servers", exc_info=True)
 
 
+# GitHub Copilot CLI's per-repo MCP files, highest precedence first within a directory.
+PROJECT_MCP_FILES = (".mcp.json", os.path.join(".github", "mcp.json"))
+
+
+def _copilot_to_hermes_mcp(cfg: dict) -> dict:
+    """Map a Copilot CLI server entry onto the ``mcp_servers`` schema."""
+    out = {k: v for k, v in cfg.items() if k not in ("type", "tools")}
+    if cfg.get("type") == "sse":
+        out["transport"] = "sse"
+    tools = cfg.get("tools")
+    if isinstance(tools, list) and "*" not in tools:
+        out["tools"] = {"include": tools}
+    return out
+
+
+def _project_mcp_servers() -> Dict[str, dict]:
+    """Servers from Copilot-style ``.mcp.json`` / ``.github/mcp.json`` files between the cwd and the
+    project root. Repo files can launch arbitrary commands, so only roots in
+    ``skills.trusted_project_dirs`` (the project-skills trust list) are read. Closer files win."""
+    from agent.runtime_cwd import resolve_agent_cwd
+    from agent.skill_utils import _current_project_root
+
+    root = _current_project_root(trusted=True)
+    if root is None:
+        return {}
+    servers: Dict[str, dict] = {}
+    cur = Path(resolve_agent_cwd()).resolve()
+    while True:
+        for rel in PROJECT_MCP_FILES:
+            path = cur / rel
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError) as exc:
+                logger.warning("Ignoring project MCP config %s: %s", path, exc)
+                continue
+            if not isinstance(data, dict):
+                continue
+            entries = data.get("mcpServers", data)
+            for name, cfg in (entries.items() if isinstance(entries, dict) else ()):
+                if isinstance(cfg, dict) and name not in servers:
+                    logger.info("Loading project MCP server '%s' from %s", name, path)
+                    servers[name] = _copilot_to_hermes_mcp(cfg)
+        if cur == root or cur.parent == cur:
+            return servers
+        cur = cur.parent
+
+
 def _load_mcp_config() -> Dict[str, dict]:
     """``mcp_servers`` from config.yaml as ``{name: config}`` (empty on error / safe mode), ``${VAR}`` interpolated."""
     try:
@@ -558,6 +607,8 @@ def _load_mcp_config() -> Dict[str, dict]:
                 _warn_hidden_whitespace(name, interpolated)
                 safe_servers[name] = interpolated
         _portable_mcp_servers(safe_servers)
+        for name, cfg in _filter_suspicious_mcp_servers(_project_mcp_servers()).items():
+            safe_servers.setdefault(name, _interpolate_env_vars(cfg))  # user config wins
         return safe_servers
     except Exception as exc:
         logger.debug("Failed to load MCP config: %s", exc)
