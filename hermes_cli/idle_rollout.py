@@ -32,7 +32,10 @@ def idle_minutes(config: Optional[dict] = None) -> float:
         value = float(((config or {}).get("updates") or {}).get("idle_minutes", DEFAULT_IDLE_MINUTES))
     except (TypeError, ValueError, AttributeError):
         return DEFAULT_IDLE_MINUTES
-    return value if value > 0 else DEFAULT_IDLE_MINUTES
+    if value <= 0:
+        return DEFAULT_IDLE_MINUTES
+    # Whole minutes stay ints so notices read "in 5 min", not "in 5.0 min".
+    return int(value) if value.is_integer() else value
 
 
 def decide(now: float, last_prompt_at: Optional[float], notice_at: Optional[float], idle_min: float) -> str:

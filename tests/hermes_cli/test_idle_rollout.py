@@ -21,6 +21,8 @@ def test_idle_decision():
 def test_config_and_eta():
     assert idle_minutes({}) == 5
     assert idle_minutes({"updates": {"idle_minutes": 2}}) == 2
+    assert json.dumps(idle_minutes({"updates": {"idle_minutes": 1.0}})) == "1"  # notice says "1 min"
+    assert idle_minutes({"updates": {"idle_minutes": 0.5}}) == 0.5
     assert idle_minutes({"updates": {"idle_minutes": "x"}}) == 5
     assert eta_seconds([]) == 300
     assert eta_seconds([100, 200, "bad"]) == 150
