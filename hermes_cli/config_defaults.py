@@ -2382,6 +2382,10 @@ DEFAULT_CONFIG = {
         # Refresh an installed cua-driver during `hermes update` (best-effort, macOS only). Turn off
         # e.g. on non-admin accounts where /Applications isn't writable.
         "refresh_cua_driver": True,
+        # Idle-gated rollout (hermes_cli/idle_rollout.py): an updater broadcasts a notice once every
+        # session has been idle this many minutes, then updates after another idle window; any
+        # prompt in between postpones it.
+        "idle_minutes": 5,
     },
     # LSP diagnostics (pyright, gopls, rust-analyzer...) in the post-write lint check of
     # write_file/patch. Runs only when the cwd or edited file is inside a git worktree; otherwise
