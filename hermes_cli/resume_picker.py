@@ -6,6 +6,7 @@ rows against the current context: same cwd > same git repo root > same branch > 
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import subprocess
@@ -14,6 +15,7 @@ from typing import Any
 
 _INTERNAL_SOURCES = ("kanban", "tool", "oneshot")
 _PER_DB_LIMIT = 200
+logger = logging.getLogger(__name__)
 
 
 def _norm(path: str | None) -> str:
@@ -57,15 +59,26 @@ def profile_dbs(root: Path) -> list[tuple[str, Path]]:
 
 
 def _read_db(profile: str, db: Path) -> list[dict[str, Any]]:
-    # mode=ro: never write (or create WAL side files' content) in another profile's DB.
-    conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+    # mode=ro: never write in another profile's DB. A read-only open fails when the -shm/-wal
+    # side files can't be created (read-only dir); immutable=1 skips them as a last resort.
+    try:
+        return _query_db(profile, f"{db.resolve().as_uri()}?mode=ro")
+    except sqlite3.Error:
+        return _query_db(profile, f"{db.resolve().as_uri()}?mode=ro&immutable=1")
+
+
+def _query_db(profile: str, uri: str) -> list[dict[str, Any]]:
+    from hermes_cli.cli_agent_setup_mixin import _user_display_text
+    from hermes_state import SessionDB
+
+    conn = sqlite3.connect(uri, uri=True, timeout=2)
     conn.row_factory = sqlite3.Row
     try:
         marks = ",".join("?" * len(_INTERNAL_SOURCES))
         rows = conn.execute(
             "SELECT s.id, s.title, s.source, s.cwd, s.git_branch, s.git_repo_root, "
             "COALESCE(s.last_activity_at, s.ended_at, s.started_at) AS last_active, "
-            "(SELECT substr(m.content, 1, 60) FROM messages m WHERE m.session_id = s.id "
+            "(SELECT m.content FROM messages m WHERE m.session_id = s.id "
             " AND m.role = 'user' ORDER BY m.id LIMIT 1) AS preview "
             f"FROM sessions s WHERE COALESCE(s.source, '') NOT IN ({marks}) "
             "AND COALESCE(s.archived, 0) = 0 AND s.parent_session_id IS NULL "
@@ -75,7 +88,9 @@ def _read_db(profile: str, db: Path) -> list[dict[str, Any]]:
         ).fetchall()
     finally:
         conn.close()
-    return [{**dict(r), "profile": profile} for r in rows]
+    return [{**dict(r), "profile": profile,
+             "preview": _user_display_text(SessionDB._decode_content(r["preview"]))[:60] or None}
+            for r in rows]
 
 
 def machine_sessions(root: Path, ctx: dict[str, str], *, exclude_id: str | None = None,
@@ -85,7 +100,8 @@ def machine_sessions(root: Path, ctx: dict[str, str], *, exclude_id: str | None 
     for profile, db in profile_dbs(root):
         try:
             rows += _read_db(profile, db)
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            logger.debug("resume picker: skipping %s (%s): %s", profile, db, exc)
             continue  # locked/old-schema DB: skip that profile rather than fail the picker
     rows = [r for r in rows if r["id"] != exclude_id]
     return sorted(rows, key=lambda r: rank_key(r, ctx))[:limit]

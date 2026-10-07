@@ -971,6 +971,8 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
     # ---- /resume, /sessions, /branch ------------------------------------------------------
     def _handle_resume_command(self, cmd_original: str) -> None:
         """Handle /resume <session_id_or_title> — switch to a previous session mid-conversation."""
+        # Listing armed by a bare `/resume` and handed over by the bare-number reply; one-shot.
+        armed, self._armed_resume_selection = getattr(self, "_armed_resume_selection", None), None
         if getattr(self, "_agent_running", False):
             return _cp(f"  {_t('shared.agent_busy', command='/resume')}")
         from cli import _sync_process_session_id
@@ -990,7 +992,7 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
         self._pending_resume_sessions = None
         if not self._session_db:
             return _cp(_db_unavailable_line())
-        resolved = self._resolve_resume_target(target)
+        resolved = self._resolve_resume_target(target, armed)
         if resolved is None:
             return
         target_id, session_meta = resolved
@@ -1037,12 +1039,13 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
         self._restore_session_yolo(session_meta)
         self._restore_session_model(session_meta)
 
-    def _resolve_resume_target(self, target: str):
+    def _resolve_resume_target(self, target: str, armed=None):
         """``(session_id, meta)`` for a numbered selection, title, or id; None after printing why
         it could not be resolved. An empty compression-chain head redirects to the descendant
         that actually holds the transcript."""
         if target.isdigit():
-            sessions = getattr(self, "_resume_candidates", None) or self._list_resume_candidates()
+            # Explicit `/resume N` re-queries; only the armed bare-number reply reuses its listing.
+            sessions = armed or self._list_resume_candidates()
             index = int(target)
             if index < 1 or index > len(sessions):
                 return _cp(*_lines(_gt("resume.out_of_range", index=index)))

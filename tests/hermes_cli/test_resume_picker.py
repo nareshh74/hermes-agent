@@ -42,3 +42,17 @@ def test_machine_sessions_spans_profiles_and_ranks(tmp_path):
     out = machine_sessions(tmp_path, {"cwd": "/proj", "git_repo_root": "/proj", "git_branch": "main"},
                            exclude_id="none")
     assert [(r["id"], r["profile"]) for r in out] == [("w1", "work"), ("d1", "default")]
+
+
+def test_machine_sessions_preview_decodes_multimodal_content(tmp_path):
+    import json
+    import sqlite3
+    _db(tmp_path / "state.db", [("m1", None, "cli", "/x", None, None, 5, None, 1)])
+    conn = sqlite3.connect(tmp_path / "state.db")
+    parts = [{"type": "text", "text": "look at this"}, {"type": "image_url", "image_url": {"url": "x"}}]
+    conn.execute("INSERT INTO messages (session_id, role, content) VALUES ('m1', 'user', ?)",
+                 ("\x00json:" + json.dumps(parts),))
+    conn.commit()
+    conn.close()
+    out = machine_sessions(tmp_path, {})
+    assert out[0]["preview"] == "look at this [image]"

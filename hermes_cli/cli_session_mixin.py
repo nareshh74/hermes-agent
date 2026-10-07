@@ -655,6 +655,7 @@ class CLISessionMixin:
             _cprint(f"  {t('cli.session.resume_index_out_of_range', index=index)}")
             _cprint(f"  {t('cli.session.resume_no_args_hint')}")
             return True
+        self._armed_resume_selection = pending
         self._handle_resume_command(f"/resume {index}")
         return True
 
