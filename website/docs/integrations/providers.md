@@ -270,9 +270,13 @@ model:
   default: gpt-5.4
 ```
 
-The native launcher runs `copilot --acp --stdio`. The Agency launcher runs
-`agency copilot --acp --stdio`. Hermes does not fall back to the native
-launcher when Agency is selected but unavailable.
+The native launcher runs `copilot --acp --stdio` and the Agency launcher runs
+`agency copilot --acp --stdio`, both followed by
+`--available-tools=hermes_text_tool_bridge_only --disable-builtin-mcps --no-custom-instructions`.
+Those flags make Copilot a pure model backend: its own tools, MCP servers,
+skills and custom instructions are off, so it calls Hermes tools through the
+text tool bridge instead. Hermes does not fall back to the native launcher when
+Agency is selected but unavailable.
 
 `HERMES_COPILOT_ACP_COMMAND`, `COPILOT_CLI_PATH`, and
 `HERMES_COPILOT_ACP_ARGS` override the stored launcher choice. If any override
@@ -284,7 +288,7 @@ These variables preserve existing custom ACP transports.
 | `COPILOT_GITHUB_TOKEN` | GitHub token for Copilot API (first priority) |
 | `HERMES_COPILOT_ACP_COMMAND` | Override the Copilot CLI binary path (default: `copilot`) |
 | `COPILOT_CLI_PATH` | Lower-priority override for the Copilot CLI binary path |
-| `HERMES_COPILOT_ACP_ARGS` | Override ACP args (default: `--acp --stdio`) |
+| `HERMES_COPILOT_ACP_ARGS` | Override ACP args (default: `--acp --stdio` plus the tool-disabling flags above) |
 
 The direct `copilot` provider still calls the Copilot HTTP API. The Agency
 launcher applies only to `copilot-acp`. Agency authentication and a full
