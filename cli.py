@@ -1498,8 +1498,7 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
         # main thread (the process_loop thread would skip cleanup / only exit itself on Windows).
         if self._pending_relaunch is not None:
             from hermes_cli.relaunch import relaunch
-            # /restart keeps --tui/--model/... ; /update must not leak them into the subcommand.
-            relaunch(self._pending_relaunch, preserve_inherited=self._pending_relaunch != ["update"])
+            relaunch(self._pending_relaunch, preserve_inherited=self._relaunch_preserve_inherited)
 
 
 def _build_cli_from_args(model, toolsets, provider, reasoning, api_key, base_url, max_turns, run_budget, verbose, compact, resume, checkpoints, pass_session_id, ignore_rules, skills):

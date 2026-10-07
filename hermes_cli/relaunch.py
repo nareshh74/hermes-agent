@@ -122,6 +122,9 @@ def relaunch(
     """
     new_argv = build_relaunch_argv(extra_args, preserve_inherited=preserve_inherited, original_argv=original_argv)
     if sys.platform == "win32":
+        # The parent stays alive, blocked in subprocess.run, until the child exits: Windows cannot
+        # replace a process image, and exiting first would orphan the child from the console and
+        # lose its exit code. One /restart = one extra waiting process; they nest if repeated.
         import subprocess
         try:
             result = subprocess.run(new_argv)

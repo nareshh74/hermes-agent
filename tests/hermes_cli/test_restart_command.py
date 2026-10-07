@@ -21,15 +21,26 @@ def test_restart_is_offered_outside_the_gateway():
 
 @pytest.mark.parametrize("history, expected", [([{"role": "user"}], ["--resume", "abc"]), ([], [])])
 def test_cli_restart_queues_resume_and_leaves_repl(history, expected):
-    self_ = SimpleNamespace(session_id="abc", conversation_history=history, _pending_relaunch=None)
+    self_ = SimpleNamespace(session_id="abc", conversation_history=history, _pending_relaunch=None,
+                            _agent_running=False)
     assert HermesCLI._cmd_restart(self_, "/restart") is False  # False = exit REPL
     assert self_._pending_relaunch == expected
+    assert self_._relaunch_preserve_inherited is True
+
+
+def test_cli_restart_refuses_mid_turn():
+    self_ = SimpleNamespace(session_id="abc", conversation_history=[{"role": "user"}],
+                            _pending_relaunch=None, _agent_running=True, _console_print=print)
+    assert HermesCLI._cmd_restart(self_, "/restart") is not False  # stay in the REPL
+    assert self_._pending_relaunch is None
 
 
 def test_restart_relaunch_keeps_inherited_mode_and_profile():
-    argv = build_relaunch_argv(["--resume", "abc"], original_argv=["--tui", "-p", "work", "-m", "x"])
+    argv = build_relaunch_argv(["--resume", "abc"],
+                               original_argv=["--tui", "-p", "work", "-m", "x", "--resume", "old"])
     assert "--tui" in argv and argv[argv.index("-p") + 1] == "work"
     assert argv[-2:] == ["--resume", "abc"]
+    assert argv.count("--resume") == 1 and "old" not in argv  # --resume is not inherit_on_relaunch
 
 
 def test_tui_exit_code_43_resumes_active_session(tmp_path, monkeypatch):
