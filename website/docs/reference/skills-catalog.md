@@ -30,6 +30,7 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 | [`computer-use`](../user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-computer-use.md) | Drive the desktop background-first; escalate on signal. | `autonomous-ai-agents/computer-use` |
 | [`hermes-agent`](../user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent.md) | Use, configure, theme, extend, and orchestrate Hermes Agent. | `autonomous-ai-agents/hermes-agent` |
 | [`opencode`](../user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode.md) | Delegate coding to OpenCode CLI (features, PR review). | `autonomous-ai-agents/opencode` |
+| [`restart-sessions`](../user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-restart-sessions.md) | Restart idle Hermes sessions onto a new install. | `autonomous-ai-agents/restart-sessions` |
 
 ## creative
 
