@@ -556,16 +556,22 @@ def _copilot_to_hermes_mcp(cfg: dict) -> dict:
 def _project_mcp_servers() -> Dict[str, dict]:
     """Servers from Copilot-style ``.mcp.json`` / ``.github/mcp.json`` files between the cwd and the
     project root. Repo files can launch arbitrary commands, so only roots in
-    ``skills.trusted_project_dirs`` (the project-skills trust list) are read. Closer files win."""
+    ``mcp.trusted_project_dirs`` are read (skill trust does not grant this). Closer files win.
+    ``${VAR}`` expands only inside a stdio server's ``env`` so a repo cannot exfiltrate secrets
+    through ``url`` / ``headers``."""
     from agent.runtime_cwd import resolve_agent_cwd
     from agent.skill_utils import _current_project_root
 
-    root = _current_project_root(trusted=True)
+    root = _current_project_root(trusted=True, section="mcp")
     if root is None:
         return {}
+    norm_root = os.path.normcase(os.path.realpath(root))
     servers: Dict[str, dict] = {}
-    cur = Path(resolve_agent_cwd()).resolve()
+    cur = Path(os.path.realpath(resolve_agent_cwd()))
     while True:
+        norm_cur = os.path.normcase(str(cur))
+        if norm_cur != norm_root and not norm_cur.startswith(norm_root.rstrip(os.sep) + os.sep):
+            return servers  # never read .mcp.json outside the repo root
         for rel in PROJECT_MCP_FILES:
             path = cur / rel
             try:
@@ -581,8 +587,11 @@ def _project_mcp_servers() -> Dict[str, dict]:
             for name, cfg in (entries.items() if isinstance(entries, dict) else ()):
                 if isinstance(cfg, dict) and name not in servers:
                     logger.info("Loading project MCP server '%s' from %s", name, path)
-                    servers[name] = _copilot_to_hermes_mcp(cfg)
-        if cur == root or cur.parent == cur:
+                    out = _copilot_to_hermes_mcp(cfg)
+                    if "command" in out and isinstance(out.get("env"), dict):
+                        out["env"] = _interpolate_env_vars(out["env"])
+                    servers[name] = out
+        if norm_cur == norm_root or cur.parent == cur:
             return servers
         cur = cur.parent
 
@@ -608,7 +617,10 @@ def _load_mcp_config() -> Dict[str, dict]:
                 safe_servers[name] = interpolated
         _portable_mcp_servers(safe_servers)
         for name, cfg in _filter_suspicious_mcp_servers(_project_mcp_servers()).items():
-            safe_servers.setdefault(name, _interpolate_env_vars(cfg))  # user config wins
+            if name in safe_servers:  # user config wins
+                logger.debug("User mcp_servers entry '%s' shadows project MCP server", name)
+            else:
+                safe_servers[name] = cfg
         return safe_servers
     except Exception as exc:
         logger.debug("Failed to load MCP config: %s", exc)
