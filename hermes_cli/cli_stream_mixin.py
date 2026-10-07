@@ -181,9 +181,9 @@ class CLIStreamMixin:
     def _format_submitted_user_message_preview(self, user_input: str) -> str:
         """Format the submitted user-message scrollback preview."""
         from cli import _accent_hex, datetime
-        ts_suffix = (
-            f" [dim]{datetime.now().strftime(getattr(self, 'timestamp_format', '%H:%M'))}[/]"
-            if getattr(self, "show_timestamps", False) else "")
+        from hermes_time import safe_strftime
+        # User prompts are always stamped; display.timestamps governs other labels.
+        ts_suffix = f" [dim]{safe_strftime(datetime.now(), getattr(self, 'timestamp_format', '%H:%M'))}[/]"
         lines = user_input.split("\n")
         if len(lines) <= 1:
             return f"[bold {_accent_hex()}]●[/] [bold]{_escape(user_input)}[/]{ts_suffix}"
@@ -236,11 +236,7 @@ class CLIStreamMixin:
                                 platform="cli", diagnostic=user_input.notification_category == "diagnostic")
             return
         ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
-        text = str(user_input or "")
-        if "\n" in text:
-            ChatConsole().print(self._format_submitted_user_message_preview(text))
-        else:
-            ChatConsole().print(f"[bold {_accent_hex()}]●[/] [bold]{_escape(text)}[/]")
+        ChatConsole().print(self._format_submitted_user_message_preview(str(user_input or "")))
 
     def _stream_reasoning_delta(self, text: str) -> None:
         """Stream reasoning tokens into a dim box above the response.
