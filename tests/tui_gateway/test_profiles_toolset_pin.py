@@ -46,3 +46,15 @@ def test_empty_pin_clears_the_pin_and_falls_back_to_the_platform_default():
     _toolsets, pinned = _describe_toolsets(cfg)
     assert pinned is None
     assert set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)) != {"web"}
+
+
+def test_repo_mcp_server_names_are_not_persisted(monkeypatch):
+    """Repo ``.mcp.json`` servers are per-checkout; pinning them would leak into the user's config.yaml."""
+    import tools.mcp_tool_config as mcp_cfg
+
+    monkeypatch.setattr(mcp_cfg, "_project_mcp_servers", lambda: {"repo-srv": {"command": "x"}})
+    cfg: dict = {}
+    _save_toolset_pin(cfg, ["web", "repo-srv"], save_config=lambda _c: None)
+    saved = cfg["platform_toolsets"]["cli"]
+    assert "repo-srv" not in saved
+    assert "web" in saved
