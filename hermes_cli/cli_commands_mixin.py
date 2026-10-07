@@ -2408,6 +2408,7 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
         _say_block(f"  {_t('update.launching')}")
         # run() execs this on the main thread after prompt_toolkit restores terminal modes;
         # relaunching from this daemon thread would skip cleanup (POSIX) / only end the thread (Windows).
+        self._relaunch_preserve_inherited = False  # --tui/--model/... must not leak into `hermes update`
         self._pending_relaunch = ["update"]
         return True
 

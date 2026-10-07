@@ -446,6 +446,7 @@ def _launch_tui(
 
     argv, cwd = _make_tui_argv(tui_dir, tui_dev)
     code: Optional[int] = None
+    restart_id: Optional[str] = None
     try:
         try:
             code = subprocess.call(argv, cwd=str(cwd), env=env)
@@ -454,6 +455,8 @@ def _launch_tui(
 
         if code in {0, 130}:
             _print_tui_exit_summary(resume_session_id, active_session_file)
+        elif code == 43:
+            restart_id = _read_tui_active_session_file(active_session_file) or resume_session_id
     finally:
         with contextlib.suppress(OSError):
             os.unlink(active_session_file)
@@ -468,6 +471,11 @@ def _launch_tui(
         from hermes_cli.relaunch import relaunch
         print("\n☤ Launching update...\n")
         relaunch(["update"], preserve_inherited=False)
+
+    # Exit code 43 = TUI /restart. Resume the same session in place; inherited flags keep --tui.
+    if code == 43:
+        from hermes_cli.relaunch import relaunch
+        relaunch(["--resume", restart_id] if restart_id else [])
 
     sys.exit(code)
 

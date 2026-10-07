@@ -259,6 +259,18 @@ class CLILoopsMixin:
         # A truthy result means the process is relaunching — leave the REPL.
         return not self._handle_update_command()
 
+    def _cmd_restart(self, cmd_original: str) -> bool:
+        # Leave the REPL; run() re-launches `hermes --resume <id>` after terminal cleanup.
+        # Profile (HERMES_HOME env) and cwd are inherited by the new process.
+        # An empty session has no DB row to resume yet, so just start fresh.
+        # Mid-turn, quitting would drop the in-flight turn (same refusal as /handoff).
+        if self._agent_running:
+            self._console_print(f"  {t('shared.agent_busy', command='/restart')}")
+            return True
+        self._relaunch_preserve_inherited = True
+        self._pending_relaunch = ["--resume", self.session_id] if self.conversation_history else []
+        return False
+
     def _cmd_version(self, cmd_original: str):
         from hermes_cli.main import _print_version_info
         _print_version_info(check_updates=True)

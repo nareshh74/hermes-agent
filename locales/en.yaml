@@ -1728,7 +1728,7 @@ slash:
   palette:
     description: "Open the fuzzy command palette (also Ctrl+P)"
   restart:
-    description: "Gracefully restart the gateway after draining active runs"
+    description: "Restart the gateway (messaging) or resume this session in a fresh process (CLI/TUI)"
   usage:
     description: "Show token usage and rate limits; `reset` redeems a banked Codex limit reset"
   subscription:

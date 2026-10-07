@@ -16,6 +16,9 @@ from contextlib import suppress
 # Log-record parity with the origin module.
 logger = logging.getLogger("cli")
 
+# Set by relaunch() on Windows once cleanup is done and the parent only waits on the child.
+_relaunch_waiting = False
+
 
 def _cli():
     """Late import of the ``cli`` facade: mutable CLI module state (and its test seams) lives there."""
@@ -78,6 +81,9 @@ def _arm_exit_watchdog(timeout_s: float | None = None, *, from_signal: bool = Fa
         time.sleep(timeout_s)
         # The signal-armed watchdog yields to cleanup's own timer once cleanup is running.
         if from_signal and _cli()._cleanup_in_progress:
+            return
+        # Windows relaunch: this process now just waits on the relaunched child, which owns the console.
+        if _relaunch_waiting:
             return
 
         try:

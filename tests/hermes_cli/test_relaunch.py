@@ -169,6 +169,27 @@ class TestRelaunch:
             relaunch_mod.relaunch(["chat"])
         assert exc_info.value.code == 42
 
+    @pytest.mark.platforms("windows")
+    def test_windows_failed_run_clears_relaunch_waiting(self, monkeypatch):
+        """A failed spawn must not leave the exit watchdog disarmed."""
+        from hermes_cli import cli_shutdown
+
+        monkeypatch.setattr(relaunch_mod, "resolve_hermes_bin", lambda: r"C:\hermes.exe")
+        monkeypatch.setattr(cli_shutdown, "_relaunch_waiting", False)
+
+        import subprocess as _subprocess
+
+        def fake_run(argv, **kwargs):
+            assert cli_shutdown._relaunch_waiting is True
+            raise OSError(8, "Exec format error")
+
+        monkeypatch.setattr(_subprocess, "run", fake_run)
+
+        with pytest.raises(SystemExit) as exc_info:
+            relaunch_mod.relaunch(["chat"])
+        assert exc_info.value.code == 1
+        assert cli_shutdown._relaunch_waiting is False
+
 
 class TestResolveHermesBinWindowsPyGuard:
     """On Windows, resolve_hermes_bin MUST NOT return a .py path.
