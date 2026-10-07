@@ -26,7 +26,7 @@ _NOT_EXCLUDED = f"source not in ({', '.join('?' * len(EXCLUDED_SOURCES))})"
 USAGE = "usage: python -m hermes_cli.idle_rollout <notice_at|0> <state.db> [...]"
 
 
-def idle_minutes(config: Optional[dict] = None) -> float:
+def idle_minutes(config: Optional[dict] = None) -> int | float:
     """``updates.idle_minutes``; invalid or missing values fall back to the default."""
     try:
         value = float(((config or {}).get("updates") or {}).get("idle_minutes", DEFAULT_IDLE_MINUTES))
