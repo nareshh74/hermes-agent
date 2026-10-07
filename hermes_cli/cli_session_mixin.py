@@ -326,6 +326,42 @@ class CLISessionMixin:
         except Exception:
             return []
 
+    def _list_resume_candidates(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Sessions from every profile on this machine, ranked against the current cwd/git context."""
+        try:
+            from hermes_cli.resume_picker import current_context, machine_sessions
+            from hermes_constants import get_default_hermes_root
+
+            self._resume_candidates = machine_sessions(
+                get_default_hermes_root(), current_context(), exclude_id=self.session_id, limit=limit)
+        except Exception:
+            self._resume_candidates = []
+        return self._resume_candidates
+
+    def _show_resume_candidates(self, limit: int = 10) -> bool:
+        """Render the bare ``/resume`` picker. Returns False when there is nothing to pick."""
+        from cli import _cli_visible_print
+        from hermes_cli.timefmt import relative_time as _relative_time
+
+        sessions = self._list_resume_candidates(limit=limit)
+        if not sessions:
+            return False
+        _cli_visible_print()
+        _cli_visible_print("  Sessions on this machine (same dir > same repo > same branch > recent):")
+        _cli_visible_print()
+        _cli_visible_print(f"  {'#':<3} {'Profile':<12} {'Title / preview':<40} {'Branch':<20} {'Last active':<13} ID")
+        for idx, s in enumerate(sessions, start=1):
+            label = (s.get("title") or s.get("preview") or "—").replace("\n", " ")[:38]
+            last = _relative_time(s.get("last_active"), session_id=s.get("id"))
+            _cli_visible_print(f"  {idx:<3} {s['profile'][:12]:<12} {label:<40} "
+                               f"{(s.get('git_branch') or '')[:20]:<20} {last:<13} {s['id']}")
+            if s.get("cwd"):
+                _cli_visible_print(f"      {s['cwd']}")
+        _cli_visible_print()
+        _cli_visible_print("  Type a number to resume, or /resume <number|id|title>.")
+        _cli_visible_print()
+        return True
+
     def _show_recent_sessions(self, *, reason: str = "history", limit: int = 10) -> bool:
         """Render recent sessions inline from the active chat TUI.
 
@@ -619,6 +655,7 @@ class CLISessionMixin:
             _cprint(f"  {t('cli.session.resume_index_out_of_range', index=index)}")
             _cprint(f"  {t('cli.session.resume_no_args_hint')}")
             return True
+        self._armed_resume_selection = pending
         self._handle_resume_command(f"/resume {index}")
         return True
 

@@ -971,6 +971,8 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
     # ---- /resume, /sessions, /branch ------------------------------------------------------
     def _handle_resume_command(self, cmd_original: str) -> None:
         """Handle /resume <session_id_or_title> — switch to a previous session mid-conversation."""
+        # Listing armed by a bare `/resume` and handed over by the bare-number reply; one-shot.
+        armed, self._armed_resume_selection = getattr(self, "_armed_resume_selection", None), None
         if getattr(self, "_agent_running", False):
             return _cp(f"  {_t('shared.agent_busy', command='/resume')}")
         from cli import _sync_process_session_id
@@ -979,22 +981,18 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
         if len(target) >= 2 and target[0] + target[-1] in {"<>", "[]", '""', "''"}:
             target = target[1:-1].strip()
         if not target:
-            _cp(f"  {_t('resume.usage')}")
-            if self._show_recent_sessions(reason="resume"):
-                # Arm a one-shot bare-number selection; must be the same list the table showed
-                # and the numbered branch resolves (all use _list_recent_sessions(limit=10)).
-                # Arm a one-shot pending-resume selection so the user can type just the number (`3`) on the
-                # next line instead of having to retype `/resume 3`. The list here must match the one shown
-                # by _show_recent_sessions and used for index resolution below — all three go through
-                # _list_recent_sessions(limit=10). See #34584.
-                self._pending_resume_sessions = self._list_recent_sessions(limit=10)
+            # Bare /resume: machine-wide picker (all profiles) ranked by the current context.
+            # Arms a one-shot bare-number selection over the same list (#34584).
+            if self._show_resume_candidates():
+                self._pending_resume_sessions = self._resume_candidates
                 return
+            _cp(f"  {_t('resume.usage')}")
             return _cp(f"  {_t('resume.tip_find_sessions')}")
         # Any explicit /resume <target> supersedes a previously-armed bare numbered prompt.
         self._pending_resume_sessions = None
         if not self._session_db:
             return _cp(_db_unavailable_line())
-        resolved = self._resolve_resume_target(target)
+        resolved = self._resolve_resume_target(target, armed)
         if resolved is None:
             return
         target_id, session_meta = resolved
@@ -1041,16 +1039,23 @@ class CLICommandsMixin(CLICommandsSessionToolsMixin):
         self._restore_session_yolo(session_meta)
         self._restore_session_model(session_meta)
 
-    def _resolve_resume_target(self, target: str):
+    def _resolve_resume_target(self, target: str, armed=None):
         """``(session_id, meta)`` for a numbered selection, title, or id; None after printing why
         it could not be resolved. An empty compression-chain head redirects to the descendant
         that actually holds the transcript."""
         if target.isdigit():
-            sessions = self._list_recent_sessions(limit=10)
+            # Explicit `/resume N` re-queries; only the armed bare-number reply reuses its listing.
+            sessions = armed or self._list_resume_candidates()
             index = int(target)
             if index < 1 or index > len(sessions):
                 return _cp(*_lines(_gt("resume.out_of_range", index=index)))
-            target_id = sessions[index - 1]["id"]
+            row = sessions[index - 1]
+            target_id = row["id"]
+            from hermes_cli.profiles import get_active_profile_name
+            if row.get("profile", get_active_profile_name()) != get_active_profile_name():
+                # Profiles are islands: another profile's session runs under that profile's home.
+                return _cp(f"  Session {target_id} belongs to profile '{row['profile']}'. Resume it with:",
+                           f"    hermes -p {row['profile']} --resume {target_id}")
         else:
             from hermes_cli.main import _resolve_session_by_name_or_id
             target_id = _resolve_session_by_name_or_id(target) or target
