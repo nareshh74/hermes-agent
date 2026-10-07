@@ -126,6 +126,9 @@ def relaunch(
         # replace a process image, and exiting first would orphan the child from the console and
         # lose its exit code. One /restart = one extra waiting process; they nest if repeated.
         import subprocess
+        from hermes_cli import cli_shutdown
+        # The exit watchdog armed by cleanup would os._exit(0) this waiting parent mid-child-session.
+        cli_shutdown._relaunch_waiting = True
         try:
             result = subprocess.run(new_argv)
             sys.exit(result.returncode)

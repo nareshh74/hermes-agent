@@ -43,6 +43,27 @@ def test_restart_relaunch_keeps_inherited_mode_and_profile():
     assert argv.count("--resume") == 1 and "old" not in argv  # --resume is not inherit_on_relaunch
 
 
+_WAIT_SRC = """
+import sys
+sys.path.insert(0, {repo!r})
+import cli
+from hermes_cli import relaunch as r
+sys.platform = "win32"  # exercise the spawn-and-wait relaunch path on any OS
+cli._arm_exit_watchdog(timeout_s=0.5)  # what _run_cleanup arms before run() relaunches
+r.build_relaunch_argv = lambda *a, **k: [sys.executable, "-c", "import time, sys; time.sleep(2); sys.exit(7)"]
+r.relaunch([])
+"""
+
+
+def test_windows_relaunch_wait_survives_exit_watchdog():
+    # The watchdog os._exit(0)s after its timeout; it must not kill the parent waiting on the child.
+    import os, subprocess, sys
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+    p = subprocess.run([sys.executable, "-c", _WAIT_SRC.format(repo=repo)], env=env, timeout=60)
+    assert p.returncode == 7
+
+
 def test_tui_exit_code_43_resumes_active_session(tmp_path, monkeypatch):
     monkeypatch.setattr(main_tui_launch, "_make_tui_argv", lambda *_a: (["node"], tmp_path))
     monkeypatch.setattr(main_tui_launch, "_read_tui_active_session_file", lambda _p: "live-id")
