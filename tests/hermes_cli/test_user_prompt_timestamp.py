@@ -1,4 +1,4 @@
-"""User prompts carry an HH:MM label when display.timestamps is on."""
+"""User prompts always carry an HH:MM label, regardless of display.timestamps."""
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -11,14 +11,14 @@ def test_resume_recap_shows_original_user_time():
     history = [{"role": "user", "content": "hi", "timestamp": ts}]
     entries, _, _ = _collect_resume_entries(history, {"timestamps": True}, lambda t: t)
     assert entries == [("user", "hi 09:07")]
-    entries, _, _ = _collect_resume_entries(history, {}, lambda t: t)
-    assert entries == [("user", "hi")]
+    entries, _, _ = _collect_resume_entries(history, {"timestamps": False}, lambda t: t)
+    assert entries == [("user", "hi 09:07")]
 
 
 def test_single_line_live_prompt_gets_timestamp(monkeypatch):
     printed = []
     monkeypatch.setattr("cli.ChatConsole", lambda: SimpleNamespace(print=printed.append))
-    cli = SimpleNamespace(show_timestamps=True, timestamp_format="%H:%M")
+    cli = SimpleNamespace(show_timestamps=False, timestamp_format="%H:%M")
     cli._format_submitted_user_message_preview = (
         lambda text: CLIStreamMixin._format_submitted_user_message_preview(cli, text))
     CLIStreamMixin._print_user_message_preview(cli, "hello")

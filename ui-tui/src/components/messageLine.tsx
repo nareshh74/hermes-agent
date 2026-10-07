@@ -256,11 +256,13 @@ export const MessageLine = memo(function MessageLine({
   // against the prose around it.
   const isDiffSegment = msg.kind === 'diff'
 
-  // `display.timestamps`: dim [HH:MM] beside the gutter glyph on user and
-  // assistant rows only — event/trail/system chrome stays unstamped, matching
-  // the classic CLI which stamps its user/assistant labels (#41531).
+  // Dim [HH:MM] beside the gutter glyph: always on user rows, on assistant
+  // rows only with `display.timestamps` — event/trail/system chrome stays
+  // unstamped, matching the classic CLI.
   const stamp =
-    timestamps && (msg.role === 'user' || msg.role === 'assistant') && !msg.kind ? fmtMsgTimestamp(msg.createdAt) : null
+    (msg.role === 'user' || (timestamps && msg.role === 'assistant')) && !msg.kind
+      ? fmtMsgTimestamp(msg.createdAt)
+      : null
 
   return (
     <Box
