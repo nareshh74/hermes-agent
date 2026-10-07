@@ -128,9 +128,12 @@ def relaunch(
         import subprocess
         from hermes_cli import cli_shutdown
         # The exit watchdog armed by cleanup would os._exit(0) this waiting parent mid-child-session.
-        cli_shutdown._relaunch_waiting = True
         try:
-            result = subprocess.run(new_argv)
+            cli_shutdown._relaunch_waiting = True
+            try:
+                result = subprocess.run(new_argv)
+            finally:
+                cli_shutdown._relaunch_waiting = False
             sys.exit(result.returncode)
         except KeyboardInterrupt:
             sys.exit(130)
