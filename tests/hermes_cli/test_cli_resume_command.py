@@ -21,6 +21,14 @@ def _make_cli():
 
 
 class TestCliResumeCommand:
+    def test_numbered_pick_from_other_profile_prints_profile_command(self, capsys):
+        cli_obj = _make_cli()
+        cli_obj._resume_candidates = [{"id": "sess_w", "profile": "zz_other_profile"}]
+        with patch("cli._cprint", side_effect=lambda *a: print(*a)):
+            cli_obj._handle_resume_command("/resume 1")
+        assert "hermes -p zz_other_profile --resume sess_w" in capsys.readouterr().out
+        assert cli_obj.session_id == "current_session"
+
     def test_show_recent_sessions_includes_indexes_and_resume_hint(self, capsys):
         cli_obj = _make_cli()
         cli_obj._list_recent_sessions = MagicMock(return_value=[
@@ -39,7 +47,7 @@ class TestCliResumeCommand:
 
     def test_handle_resume_by_index_switches_to_numbered_session(self):
         cli_obj = _make_cli()
-        cli_obj._list_recent_sessions = MagicMock(return_value=[
+        cli_obj._list_resume_candidates = MagicMock(return_value=[
             {"id": "sess_002", "title": "Coding"},
             {"id": "sess_001", "title": "Research"},
         ])
@@ -66,7 +74,7 @@ class TestCliResumeCommand:
 
     def test_handle_resume_by_index_out_of_range(self):
         cli_obj = _make_cli()
-        cli_obj._list_recent_sessions = MagicMock(return_value=[
+        cli_obj._list_resume_candidates = MagicMock(return_value=[
             {"id": "sess_002", "title": "Coding"},
         ])
 
@@ -155,8 +163,9 @@ class TestPendingResumeNumberedSelection:
             {"id": "sess_002", "title": "Coding"},
             {"id": "sess_001", "title": "Research"},
         ]
-        cli_obj._list_recent_sessions = MagicMock(return_value=sessions)
-        cli_obj._show_recent_sessions = MagicMock(return_value=True)
+        cli_obj._list_resume_candidates = MagicMock(return_value=sessions)
+        cli_obj._show_resume_candidates = MagicMock(return_value=True)
+        cli_obj._resume_candidates = sessions
 
         with patch("cli._cprint"):
             cli_obj._handle_resume_command("/resume")
@@ -172,8 +181,8 @@ class TestPendingResumeNumberedSelection:
         ]
         cli_obj._pending_resume_sessions = sessions
         # _handle_resume_command("/resume 2") re-resolves the index via
-        # _list_recent_sessions, so it must return the same list.
-        cli_obj._list_recent_sessions = MagicMock(return_value=sessions)
+        # _list_resume_candidates, so it must return the same list.
+        cli_obj._list_resume_candidates = MagicMock(return_value=sessions)
         cli_obj._session_db.get_session.return_value = {"id": "sess_001", "title": "Research"}
         cli_obj._session_db.get_resume_conversations.return_value = [
             {"role": "user", "content": "hello"},
