@@ -72,3 +72,14 @@ def test_walk_does_not_escape_root(tmp_path, monkeypatch):
     monkeypatch.setattr(su, "find_project_root", lambda start=None: tmp_path / "proj")
     assert "above" not in _load_mcp_config()
     su._external_dirs_cache_clear()
+
+
+def test_project_servers_enabled_for_toolset_resolution(tmp_path, monkeypatch):
+    """Connected repo servers must also be exposed to the model, not just registered."""
+    from hermes_cli.tools_config import enabled_mcp_server_names
+
+    _setup(tmp_path, monkeypatch, trusted=True)
+    assert {"docs", "gh", "envd"} <= enabled_mcp_server_names({"mcp_servers": {"ado": {"command": "user-ado"}}})
+    (tmp_path / "u").mkdir()
+    _setup(tmp_path / "u", monkeypatch, trusted=False)
+    assert "docs" not in enabled_mcp_server_names({"mcp_servers": {}})
