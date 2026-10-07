@@ -236,11 +236,7 @@ class CLIStreamMixin:
                                 platform="cli", diagnostic=user_input.notification_category == "diagnostic")
             return
         ChatConsole().print(f"[{_accent_hex()}]{'─' * 40}[/]")
-        text = str(user_input or "")
-        if "\n" in text:
-            ChatConsole().print(self._format_submitted_user_message_preview(text))
-        else:
-            ChatConsole().print(f"[bold {_accent_hex()}]●[/] [bold]{_escape(text)}[/]")
+        ChatConsole().print(self._format_submitted_user_message_preview(str(user_input or "")))
 
     def _stream_reasoning_delta(self, text: str) -> None:
         """Stream reasoning tokens into a dim box above the response.

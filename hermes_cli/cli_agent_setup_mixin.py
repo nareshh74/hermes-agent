@@ -177,6 +177,11 @@ def _collect_resume_entries(display_history, disp: dict, clean_assistant):
             text = _sanitize_display_text(_user_display_text(content))
             if len(text) > max_user_len:
                 text = text[:max_user_len] + "..."
+            ts = msg.get("timestamp") if disp.get("timestamps") else None
+            if isinstance(ts, (int, float)) and ts > 0:  # stored original time; never fabricate
+                from datetime import datetime
+                from hermes_time import safe_strftime
+                text = f"{text} {safe_strftime(datetime.fromtimestamp(ts), disp.get('timestamp_format', '%H:%M'))}"
             entries.append(("user", text))
         elif role == "assistant":
             text = clean_assistant("" if content is None else str(content))
