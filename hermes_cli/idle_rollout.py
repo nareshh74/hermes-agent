@@ -20,6 +20,10 @@ from typing import Optional
 
 DEFAULT_IDLE_MINUTES = 5
 DEFAULT_ETA_SECONDS = 300
+# Sessions that are not a person at a prompt: never block or postpone an update.
+EXCLUDED_SOURCES = ("cron", "oneshot", "kanban", "tool")
+_NOT_EXCLUDED = f"source not in ({', '.join('?' * len(EXCLUDED_SOURCES))})"
+USAGE = "usage: python -m hermes_cli.idle_rollout <notice_at|0> <state.db> [...]"
 
 
 def idle_minutes(config: Optional[dict] = None) -> float:
@@ -54,7 +58,7 @@ def eta_seconds(durations: Optional[list]) -> int:
 
 
 def last_prompt_at(dbs: list) -> Optional[float]:
-    """Newest message timestamp across state DBs, excluding cron/oneshot runs. Read-only."""
+    """Newest message timestamp across state DBs, excluding ``EXCLUDED_SOURCES``. Read-only."""
     newest = None
     for path in dbs:
         if not Path(path).exists():
@@ -64,7 +68,8 @@ def last_prompt_at(dbs: list) -> Optional[float]:
             try:
                 (ts,) = con.execute(
                     "select max(m.timestamp) from messages m join sessions s on s.id = m.session_id "
-                    "where s.source not in ('cron', 'oneshot')"
+                    f"where s.{_NOT_EXCLUDED}",
+                    EXCLUDED_SOURCES,
                 ).fetchone()
             finally:
                 con.close()
@@ -73,6 +78,44 @@ def last_prompt_at(dbs: list) -> Optional[float]:
         if ts is not None and (newest is None or ts > newest):
             newest = float(ts)
     return newest
+
+
+def busy_sessions(dbs: list, now: float, idle_min: float) -> list:
+    """Session ids holding a live lease with a turn in flight or activity inside the window.
+
+    Each ``state.db`` is paired with the lease registry of its own profile home
+    (``<home>/runtime/active_sessions.json``), so in-flight turns that have not yet
+    written a message still block the rollout.
+    """
+    from hermes_cli import active_sessions
+
+    window = idle_min * 60
+    busy = []
+    for path in dbs:
+        home = Path(path).parent
+        try:
+            entries = active_sessions._prune_dead(active_sessions._read_entries(active_sessions._state_path(home)))
+        except Exception:
+            continue
+        ids = [str(e["session_id"]) for e in entries if e.get("session_id")]
+        if not ids or not Path(path).exists():
+            continue
+        try:
+            con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+            try:
+                rows = con.execute(
+                    f"select id, last_activity_description, last_activity_at from sessions "
+                    f"where id in ({', '.join('?' * len(ids))}) and {_NOT_EXCLUDED}",
+                    (*ids, *EXCLUDED_SOURCES),
+                ).fetchall()
+            finally:
+                con.close()
+        except sqlite3.Error:
+            continue
+        for sid, desc, at in rows:
+            if (desc or "").strip() or (at is not None and now - float(at) < window):
+                busy.append(sid)
+    return busy
 
 
 def broadcast_targets() -> list:
@@ -96,14 +139,25 @@ def broadcast_targets() -> list:
 def main(argv: list) -> int:
     from hermes_cli.config import load_config_readonly
 
-    notice_at = (float(argv[0]) or None) if argv else None
+    try:
+        notice_at = (float(argv[0]) or None) if argv else None
+    except ValueError:
+        print(USAGE, file=sys.stderr)
+        return 2
     now = time.time()
-    last = last_prompt_at(argv[1:])
+    dbs = argv[1:]
+    last = last_prompt_at(dbs)
     minutes = idle_minutes(load_config_readonly())
+    busy = busy_sessions(dbs, now, minutes)
+    # A turn in flight counts as activity now: it blocks a notice and postpones a pending one.
+    action = decide(now, now if busy else last, notice_at, minutes)
     print(json.dumps({
-        "action": decide(now, last, notice_at, minutes),
+        "action": action,
         "idle_minutes": minutes,
         "last_prompt_at": last,
+        "busy_sessions": busy,
+        # Postpone clears the pending notice; the caller stores this value back.
+        "notice_at": None if action == "postpone" else notice_at,
         "targets": broadcast_targets(),
     }))
     return 0
