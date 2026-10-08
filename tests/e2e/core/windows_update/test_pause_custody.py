@@ -37,7 +37,8 @@ from tests.e2e.core.windows_update._machine import REQUIRES_OPT_IN, fail_with, n
 from tests.fakes.fake_llm_provider import FakeLLMServer
 
 pytestmark = [pytest.mark.platforms("windows"), pytest.mark.integration,
-              pytest.mark.live_system_guard_bypass, REQUIRES_OPT_IN]
+              pytest.mark.live_system_guard_bypass, pytest.mark.real_user_environment,
+              REQUIRES_OPT_IN]
 
 _STEM = ".hermes-update-paused-gateways"
 _RESTARTING = "Restarting gateway(s) paused by an interrupted"
