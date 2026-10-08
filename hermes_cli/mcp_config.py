@@ -744,6 +744,14 @@ def cmd_mcp_remove(args):
 def cmd_mcp_list(args=None):
     """List all configured MCP servers."""
     servers = _get_mcp_servers()
+    try:  # file-owned servers (Copilot user config, trusted repo .mcp.json); config.yaml wins on a clash
+        from tools.mcp_tool_config import _copilot_user_mcp_servers, _project_mcp_servers
+        for src, extra in (("copilot", _copilot_user_mcp_servers()), ("repo", _project_mcp_servers())):
+            for n, c in extra.items():
+                if n not in servers:
+                    servers[f"{n} ({src})"] = c
+    except Exception:
+        pass
     if not servers:
         print()
         _info("No MCP servers configured.")
