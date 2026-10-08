@@ -561,6 +561,35 @@ The complete desktop builder also builds the JavaScript surfaces, generates
 launchers, and invokes native packaging. Maintainers can read
 [Building the Desktop Installers](https://github.com/NousResearch/hermes-agent/blob/main/apps/desktop/BUILDING.md).
 
+## Package mirrors
+
+PM forwards uv's index settings (`UV_INDEX_URL`, `UV_DEFAULT_INDEX`, ...) and
+bridges pip's (`PIP_INDEX_URL`, `index-url` in `pip.conf`). Those settings only
+change where uv *resolves*. A frozen install still downloads the absolute
+artifact URLs recorded in `uv.lock`, which point at `files.pythonhosted.org`.
+
+On a network that blocks that host but offers a PyPI mirror, set
+`HERMES_PYPI_INDEX_URL` to the mirror's simple index:
+
+```bash
+export HERMES_PYPI_INDEX_URL=https://mirror.example/pypi/simple/
+```
+
+On Windows, set it as a User environment variable so `hermes update`, the
+installer and the desktop bootstrap all see it:
+
+```powershell
+[Environment]::SetEnvironmentVariable('HERMES_PYPI_INDEX_URL', 'https://mirror.example/pypi/simple/', 'User')
+```
+
+With the setting, PM re-locks its own working copy of each lock (the generated
+dependency workspace and PM's runtime snapshot) against the mirror before the
+frozen sync, and passes the index to every uv command it runs. The committed
+`uv.lock` files are never modified. The re-lock must keep every pinned version
+and may only use artifacts whose sha256 the committed lock already records;
+otherwise PM restores the copy and fails. The mirror must therefore serve the
+same files as PyPI. Unset, PM behaves exactly as before.
+
 ## Network retries
 
 PM retries transient HTTP failures during tool downloads, artifact hashing and

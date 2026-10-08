@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -200,7 +201,7 @@ def _base_environment(env: Mapping[str, str] | None = None) -> dict[str, str]:
     Index and transport settings are the exception (pm.index_config): without
     them mirrored and air-gapped networks cannot resolve anything.
     """
-    from pm.index_config import bridged_index_settings, is_forwarded
+    from pm.index_config import bridged_index_settings, hermes_index_url, is_forwarded, is_index_redirect
 
     source = os.environ if env is None else env
     base = {key: value for key, value in source.items()
@@ -208,7 +209,19 @@ def _base_environment(env: Mapping[str, str] | None = None) -> dict[str, str]:
             and (not key.startswith("UV_") or is_forwarded(key))}
     if env is None:
         base.update(bridged_index_settings(os.environ))
+    index = hermes_index_url(source)
+    if index:
+        # Hermes's own index setting is the explicit choice; it beats ambient knobs.
+        for key in [key for key in base if is_index_redirect(key)]:
+            del base[key]
+        base["UV_INDEX_URL"] = index
     return base
+
+
+_LOCK_OPTIONS = re.compile(r"(?ms)^\[options(?:\.[^\]\n]*)?\]\n.*?(?=^\[(?!options[\].]))")
+_LOCK_REGISTRY = re.compile(r'(?m)^source = \{ registry = "([^"]+)" \}')
+_LOCK_PIN = re.compile(r'(?m)^name = "([^"]+)"\nversion = "([^"]+)"')
+_LOCK_HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def managed_environment(destination: Path, *, python: Path | None = None,
@@ -285,6 +298,13 @@ class PythonEnvironment:
             from pm.index_config import is_index_redirect
 
             env = {key: value for key, value in env.items() if not is_index_redirect(key)}
+            # Except Hermes's own index: once a lock is re-pointed at it
+            # (relock_to_index), it is the only index that serves those URLs.
+            from pm.index_config import hermes_index_url
+
+            index = hermes_index_url(self.env)
+            if index:
+                env["UV_INDEX_URL"] = index
         # uv is a child: it gets the ordinary spelling of store paths (pm.filesystem.native),
         # or the venv it writes would record the extended-length one in pyvenv.cfg.
         env.update(UV_PYTHON=native(self.python), UV_PROJECT_ENVIRONMENT=native(self.destination),
@@ -344,6 +364,51 @@ class PythonEnvironment:
         result = self._run(command, cwd=source, timeout=timeout)
         if result.returncode:
             raise classify_uv_failure("lock", result.returncode, result.stderr or result.stdout)
+
+    def relock_to_index(self, source: Path, *, timeout: int = 1800) -> None:
+        """Re-point *source*'s lock at ``HERMES_PYPI_INDEX_URL``; no-op when unset.
+
+        A frozen sync downloads the absolute artifact URLs the lock records, so
+        an index setting alone cannot reach a network that blocks the upstream
+        file host. *source* must be a writable working copy (a generated
+        workspace or snapshot), never the checkout. The relock keeps every pin
+        and accepts only artifacts whose hashes the original lock already
+        recorded; the quarantine is lifted for this resolve only (the pins were
+        vetted when the original lock was made) and the original ``[options]``
+        are restored so ``--locked`` checks still see the committed policy.
+        """
+        from pm.index_config import hermes_index_url
+
+        index = hermes_index_url(self.env)
+        lock = source / "uv.lock"
+        if not index or not lock.is_file():
+            return
+        before = lock.read_text(encoding="utf-8")
+        registries = set(_LOCK_REGISTRY.findall(before))
+        if not registries or registries == {index}:
+            return
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # pyproject's per-package exclude-newer entries beat a global flag, so lift
+        # the cutoff per locked package too; the pin/hash check below is the guard.
+        command = ["lock", "--python", str(self.python), "--index-url", index, "--exclude-newer", now]
+        for name in sorted({name for name, _ in _LOCK_PIN.findall(before)}):
+            command += ["--exclude-newer-package", f"{name}={now}"]
+        result = self._run(command, cwd=source, timeout=timeout)
+        if result.returncode:
+            raise classify_uv_failure("lock", result.returncode, result.stderr or result.stdout)
+        after = lock.read_text(encoding="utf-8")
+        if (set(_LOCK_PIN.findall(after)) != set(_LOCK_PIN.findall(before))
+                or not set(_LOCK_HASH.findall(after)) <= set(_LOCK_HASH.findall(before))):
+            lock.write_bytes(before.encode("utf-8"))
+            raise InstallError("venv", f"{index} cannot serve the exact pins of {lock}",
+                               "the index must mirror PyPI; unset HERMES_PYPI_INDEX_URL to use the lock's own URLs")
+        options = _LOCK_OPTIONS.search(before)
+        after = _LOCK_OPTIONS.sub("", after, count=1)
+        if options:
+            at = re.search(r"(?m)^\[", after)
+            cut = at.start() if at else len(after)
+            after = after[:cut] + options.group(0) + after[cut:]
+        lock.write_bytes(after.encode("utf-8"))
 
     def check_lock(self, source: Path) -> None:
         result = self._run(["lock", "--check", "--python", str(self.python)],

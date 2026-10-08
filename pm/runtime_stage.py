@@ -37,6 +37,7 @@ def stage_runtime(uv: Path, python: Path, destination: Path, *,
             shutil.copyfile(project / name, snapshot / name)
         environment.create()
         if wheelhouse is None:
+            environment.relock_to_index(snapshot, timeout=600)
             environment.sync(snapshot, locked=True, no_default_groups=True,
                              no_install_project=True, timeout=600)
         else:
