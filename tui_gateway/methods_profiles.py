@@ -680,8 +680,10 @@ def _save_toolset_pin(cfg, enabled, save_config) -> None:
     """Pin ``platform_toolsets.cli``: the key ``_load_enabled_toolsets`` reads and ``hermes tools`` writes.
     An empty selection clears the pin so the platform default applies again."""
     from hermes_cli.tools_config import _save_platform_tools
+    from tools.mcp_tool_config import _project_mcp_servers
 
-    wanted = _clean_names(enabled)
+    # Repo .mcp.json servers belong to the checkout, never to the user's config.yaml.
+    wanted = _clean_names(enabled) - set(_project_mcp_servers())
     if wanted:
         _save_platform_tools(cfg, "cli", wanted)
     elif isinstance(cfg.get("platform_toolsets"), dict):

@@ -536,10 +536,12 @@ def find_project_root(start: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def _project_trusted_dirs_from_config() -> Set[Path]:
-    """Resolved set of trusted project roots from ``skills.trusted_project_dirs``."""
+def _project_trusted_dirs_from_config(section: str = "skills") -> Set[Path]:
+    """Resolved set of trusted project roots from ``<section>.trusted_project_dirs``."""
+    cfg = _load_raw_config().get(section) if section != "skills" else _skills_cfg()
+    raw = cfg.get("trusted_project_dirs") if isinstance(cfg, dict) else None
     result: Set[Path] = set()
-    for entry in _config_str_list(_skills_cfg_get("trusted_project_dirs")):
+    for entry in _config_str_list(raw):
         try:
             result.add(_expand_path(entry).resolve())
         except OSError:
@@ -547,10 +549,10 @@ def _project_trusted_dirs_from_config() -> Set[Path]:
     return result
 
 
-def is_project_root_trusted(root: Path) -> bool:
-    """True when *root* is listed in ``skills.trusted_project_dirs``."""
+def is_project_root_trusted(root: Path, section: str = "skills") -> bool:
+    """True when *root* is listed in ``<section>.trusted_project_dirs``."""
     try:
-        return Path(root).resolve() in _project_trusted_dirs_from_config()
+        return Path(root).resolve() in _project_trusted_dirs_from_config(section)
     except OSError:
         return False
 
@@ -569,12 +571,12 @@ def _candidate_project_skills_dirs(root: Path) -> List[Path]:
     return dirs
 
 
-def _current_project_root(trusted: bool) -> Optional[Path]:
-    """cwd's project root when discovery is on and its trust state == *trusted*."""
+def _current_project_root(trusted: bool, section: str = "skills") -> Optional[Path]:
+    """cwd's project root when discovery is on and its ``<section>`` trust state == *trusted*."""
     if _skills_cfg_get("project_discovery") is False:
         return None
     root = find_project_root()
-    return root if root is not None and is_project_root_trusted(root) == trusted else None
+    return root if root is not None and is_project_root_trusted(root, section) == trusted else None
 
 
 def get_project_skills_dirs() -> List[Path]:

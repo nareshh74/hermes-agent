@@ -424,6 +424,11 @@ def enabled_mcp_server_names(config: dict) -> Set[str]:
         names |= portable - set(mcp_servers)  # native config wins on a name collision (mirrors _load_mcp_config)
     except Exception:
         logger.debug("Failed to include portable MCP servers", exc_info=True)
+    try:
+        from tools.mcp_tool_config import _project_mcp_servers
+        names |= {n for n, c in _project_mcp_servers().items() if mcp_server_enabled(c)} - set(mcp_servers)
+    except Exception:
+        logger.debug("Failed to include project MCP servers", exc_info=True)
     return names
 
 
