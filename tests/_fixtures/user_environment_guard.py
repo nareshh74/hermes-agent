@@ -13,15 +13,52 @@ dead pytest launcher. This guard makes that impossible: every ``winreg`` open of
 ``HKCU\\Environment`` returns an in-memory key seeded from the real values, and the
 ``WM_SETTINGCHANGE`` broadcast is dropped. Tests that drive a real machine (the
 opt-in ``tests/e2e/core/windows_update`` suite) opt out with
-``@pytest.mark.live_system_guard_bypass`` and restore PATH themselves.
+``@pytest.mark.real_user_environment`` and restore PATH themselves; the
+generic ``live_system_guard_bypass`` does not lift this guard.
+
+The fixture patches this interpreter only. Child processes (a spawned
+``hermes``, ``install.ps1``) reach the real registry, so a session-end
+backstop (``strip_session_user_path_leaks``) removes any User PATH entry that
+points inside this run's pytest basetemp.
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
+REAL_USER_ENVIRONMENT_MARK = "real_user_environment"
 _ENVIRONMENT_SUBKEY = "environment"
+
+
+def strip_session_user_path_leaks(basetemp: Path) -> list[str]:
+    """Remove User PATH entries under *basetemp* from the real registry; return them.
+
+    Only entries inside this session's own temp tree are touched, so nothing a
+    developer or another process added can be removed.
+    """
+    if os.name != "nt":
+        return []
+    import ctypes
+    import winreg
+
+    root = os.path.normcase(os.path.realpath(basetemp)).rstrip("\\/") + os.sep
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
+                        winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+        try:
+            value, kind = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            return []
+        parts = [part for part in str(value).split(";") if part]
+        leaked = [part for part in parts
+                  if (os.path.normcase(os.path.realpath(os.path.expandvars(part))).rstrip("\\/") + os.sep)
+                  .startswith(root)]
+        if leaked:
+            winreg.SetValueEx(key, "Path", 0, kind, ";".join(p for p in parts if p not in leaked))
+    if leaked:
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x1A, 0, "Environment", 0x0002, 5000, None)
+    return leaked
 
 
 class SandboxEnvironmentKey:
@@ -72,7 +109,7 @@ def _user_environment_guard(request, monkeypatch):
     Yields the sandbox value map (casefolded name -> ``(data, type)``), or None
     off Windows / when bypassed.
     """
-    if os.name != "nt" or request.node.get_closest_marker("live_system_guard_bypass") is not None:
+    if os.name != "nt" or request.node.get_closest_marker(REAL_USER_ENVIRONMENT_MARK) is not None:
         yield None
         return
 

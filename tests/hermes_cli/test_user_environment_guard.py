@@ -55,3 +55,30 @@ def test_install_repair_user_path_write_stays_in_the_sandbox(tmp_path):
     _install_repair._write_user_path_raw([str(tmp_path / "bin"), *entries], kind)
     assert _real_user_path() == saved
     assert _install_repair._read_user_path_raw()[0][0] == str(tmp_path / "bin")
+
+
+@pytest.mark.platforms("windows")
+@pytest.mark.live_system_guard_bypass
+def test_generic_live_system_bypass_keeps_the_registry_guard():
+    # Signal/process tests use that marker; it is no licence to edit the User PATH.
+    _require_guard()
+
+
+@pytest.mark.platforms("windows")
+@pytest.mark.real_user_environment
+def test_machine_e2e_marker_reaches_the_real_registry():
+    assert winreg.SetValueEx is _REAL_SET
+
+
+@pytest.mark.platforms("windows")
+def test_session_backstop_strips_only_entries_under_basetemp(tmp_path, _user_environment_guard):
+    # Runs against the sandboxed key; the hook calls the same function on the real one.
+    from tests._fixtures.user_environment_guard import strip_session_user_path_leaks
+
+    basetemp = tmp_path / "basetemp"
+    leaked = str(basetemp / "pytest-0" / "test_x0" / "bin")
+    keep = [r"%LOCALAPPDATA%\hermes\launch", str(tmp_path / "basetemp-sibling" / "bin")]
+    _user_environment_guard["path"] = (";".join([leaked, *keep]), winreg.REG_EXPAND_SZ)
+
+    assert strip_session_user_path_leaks(basetemp) == [leaked]
+    assert _user_environment_guard["path"] == (";".join(keep), winreg.REG_EXPAND_SZ)

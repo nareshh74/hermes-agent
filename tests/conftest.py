@@ -251,7 +251,11 @@ from tests._fixtures.live_system_guard import (  # noqa: F401 — _live_system_g
     _live_system_guard,
 )
 from tests._fixtures.platform_gating import _platforms_gate_reason, _reject_contradictory_platform_marks
-from tests._fixtures.user_environment_guard import _user_environment_guard  # noqa: F401 — registers here
+from tests._fixtures.user_environment_guard import (  # noqa: F401 — _user_environment_guard registers here
+    REAL_USER_ENVIRONMENT_MARK,
+    _user_environment_guard,
+    strip_session_user_path_leaks,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1092,7 +1096,23 @@ def require_mcp_2_sdk():
 
 
 def pytest_unconfigure(config):  # noqa: D401 — pytest hook
+    _strip_user_path_leaks(config)
     _remove_relocated_basetemp(config)
+
+
+def _strip_user_path_leaks(config) -> None:
+    """Backstop for child processes the in-process registry guard cannot see."""
+    factory = getattr(config, "_tmp_path_factory", None)
+    basetemp = getattr(factory, "_basetemp", None) if factory is not None else None
+    if basetemp is None:
+        return
+    try:
+        leaked = strip_session_user_path_leaks(basetemp)
+    except OSError as exc:
+        sys.stderr.write(f"warning: could not check the User PATH for test leaks: {exc}\n")
+        return
+    for entry in leaked:
+        sys.stderr.write(f"warning: removed a test directory a child process added to the User PATH: {entry}\n")
 
 
 @pytest.hookimpl(trylast=True)  # after _pytest.tmpdir has built config._tmp_path_factory
@@ -1107,6 +1127,11 @@ def pytest_configure(config):  # noqa: D401 — pytest hook
     )
     config.addinivalue_line(
         "markers", "allow_real_home_io: explicitly bypass the test-only home I/O guard."
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{REAL_USER_ENVIRONMENT_MARK}: use the real HKCU\\Environment registry key (Windows "
+        "machine E2E only; the test must restore what it changes).",
     )
     config.addinivalue_line(
         "markers", "real_release_channels: keep the real R2 channel reader (no local source-branch stub)."
