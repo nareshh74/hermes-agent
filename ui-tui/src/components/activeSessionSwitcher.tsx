@@ -840,7 +840,11 @@ export function ActiveSessionSwitcher({
                 </Text>
               </Box>
 
-              <SessionAgeColumns color={rowTextColor ?? t.color.muted} created={h.started_at} modified={h.last_active} />
+              <SessionAgeColumns
+                color={rowTextColor ?? t.color.muted}
+                created={h.started_at}
+                modified={h.last_active}
+              />
 
               <Box flexGrow={1} flexShrink={1} minWidth={0}>
                 <Text
