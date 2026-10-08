@@ -379,4 +379,8 @@ def lock_and_sync(
         shutil.copytree(replay, root, symlinks=True, ignore=_member_ignored)
         frozen = True
 
+    if frozen:
+        # No-op unless HERMES_PYPI_INDEX_URL is set. A resolving sync needs no
+        # relock: uv re-resolves against that index, preferring the seed's pins.
+        environment.relock_to_index(root)
     environment.sync(root, extras=extras, frozen=frozen)

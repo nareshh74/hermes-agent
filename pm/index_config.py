@@ -135,6 +135,19 @@ def npm_registry_url(url: str, env: Mapping[str, str]) -> str:
     return npm_registry(env) + url[len(NPM_PUBLIC_REGISTRY):]
 
 
+HERMES_INDEX_ENV = "HERMES_PYPI_INDEX_URL"
+
+
+def hermes_index_url(env: Mapping[str, str]) -> str | None:
+    """The package index Hermes installs from, or None for the locks' own URLs.
+
+    Unlike ``UV_INDEX_URL`` this also re-points the frozen locks (pm.environment
+    ``relock_to_index``): their artifact URLs are absolute, so an index setting
+    alone never reaches a network that blocks files.pythonhosted.org.
+    """
+    return (env.get(HERMES_INDEX_ENV) or "").strip() or None
+
+
 def bridged_index_settings(ambient: Mapping[str, str]) -> dict[str, str]:
     """The uv index/transport settings *ambient* asks for, pip knobs translated.
 

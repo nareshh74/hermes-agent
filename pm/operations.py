@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 import uuid
 
 from pm.package import InstallError
@@ -23,6 +24,16 @@ def _require_install_allowed(explicit: bool) -> None:
 
     if not explicit and not lazy_installs_allowed():
         raise _refuse_lazy("venv", "Python dependency operation requires an explicit request")
+
+
+def _manifests_suffice(source: Path) -> bool:
+    """Can a frozen no-project sync run from a copy of just pyproject.toml + uv.lock?
+
+    Not when the lock names other local projects (workspace members, path deps).
+    """
+    local = re.findall(r'source = \{ (?:editable|virtual|directory|path) = "([^"]+)"',
+                       (source / "uv.lock").read_text(encoding="utf-8"))
+    return set(local) <= {"."}
 
 
 def build_environment(
@@ -40,6 +51,7 @@ def build_environment(
     Sealed builds prune only the .pth files that refer to build-time state.
     """
     from pm.environment import _fresh_build, managed_environment
+    from pm.index_config import hermes_index_url
     from pm.native_build import source_build_environment
 
     source, out = Path(source).absolute(), Path(out).absolute()
@@ -60,8 +72,19 @@ def build_environment(
         offline=offline, explicit=explicit, output=sys.stderr,
     )
     with _fresh_build(environment, sealed=sealed):
-        environment.sync(source, extras=extras, groups=groups, all_extras=all_extras,
-                         no_install_project=no_install_project, frozen=frozen, timeout=timeout)
+        if frozen and no_install_project and hermes_index_url(environment.env) and _manifests_suffice(source):
+            # Re-point a private copy of the lock (never the checkout's). Only the
+            # manifests are needed: the project itself is not installed.
+            with tempfile.TemporaryDirectory(prefix="pm-project-") as temp:
+                snapshot = Path(temp)
+                for name in ("pyproject.toml", "uv.lock"):
+                    shutil.copyfile(source / name, snapshot / name)
+                environment.relock_to_index(snapshot, timeout=timeout)
+                environment.sync(snapshot, extras=extras, groups=groups, all_extras=all_extras,
+                                 no_install_project=True, timeout=timeout)
+        else:
+            environment.sync(source, extras=extras, groups=groups, all_extras=all_extras,
+                             no_install_project=no_install_project, frozen=frozen, timeout=timeout)
     return environment.executable
 
 
