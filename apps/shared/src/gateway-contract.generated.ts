@@ -3200,6 +3200,7 @@ export interface SessionListRow {
   title?: string
   preview?: string
   started_at?: number
+  last_active?: number
   message_count?: number
   live_message_count?: number | null
   source?: string

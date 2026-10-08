@@ -128,12 +128,14 @@ describe('unified Sessions overlay helpers', () => {
     expect(resumableHistory(history, []).map(h => h.id)).toEqual(['a', 'b', 'c'])
   })
 
-  it('renders relative session age, blank when unknown', () => {
-    const nowSec = Math.floor(Date.now() / 1000)
+  it('renders compact relative session age, blank when unknown', () => {
+    const now = 1_800_000_000_000
+    const sec = now / 1000
 
-    expect(relativeSessionAge(nowSec)).toBe(messages().pickers.session.age.today)
-    expect(relativeSessionAge(nowSec - 36 * 3600)).toBe(messages().pickers.session.age.yesterday)
-    expect(relativeSessionAge(nowSec - 3 * 86400)).toBe(messages().pickers.session.age.daysAgo(3))
+    expect(relativeSessionAge(sec - 3 * 3600, now)).toBe('3h ago')
+    expect(relativeSessionAge(sec - 5 * 60, now)).toBe('5m ago')
+    expect(relativeSessionAge(sec - 12 * 86400, now)).toBe('12d ago')
+    expect(relativeSessionAge(sec - 10, now)).toBe('now')
     expect(relativeSessionAge(undefined)).toBe('')
     expect(relativeSessionAge(0)).toBe('')
   })

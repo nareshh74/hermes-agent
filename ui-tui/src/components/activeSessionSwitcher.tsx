@@ -10,7 +10,7 @@ import type {
   SessionCloseResponse,
   SessionDeleteResponse
 } from '../gatewayTypes.js'
-import { messages } from '../i18n/runtime.js'
+import { getLocale, messages } from '../i18n/runtime.js'
 import { useT } from '../i18n/useT.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import type { Theme } from '../theme.js'
@@ -42,10 +42,33 @@ export const sessionStatusLabel = (status: string): string => {
 
 const CTRL_OFFSET = 96
 
+const AGE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['year', 365 * 86400],
+  ['month', 30 * 86400],
+  ['day', 86400],
+  ['hour', 3600],
+  ['minute', 60]
+]
+
 const shortModel = (model = '') => model.replace(/^.*\//, '') || messages().pickers.session.modelUnknown
 const ctrlChar = (letter: string) => String.fromCharCode(letter.charCodeAt(0) - CTRL_OFFSET)
 
 export const fixedSessionColumnStyle = () => ({ flexShrink: 0 })
+
+const SessionAgeColumns = ({ color, created, modified }: { color?: string; created?: number; modified?: number }) => (
+  <>
+    <Box {...fixedSessionColumnStyle()} width={9}>
+      <Text color={color} wrap="truncate-end">
+        {relativeSessionAge(created)}
+      </Text>
+    </Box>
+    <Box {...fixedSessionColumnStyle()} width={9}>
+      <Text color={color} wrap="truncate-end">
+        {relativeSessionAge(modified || created)}
+      </Text>
+    </Box>
+  </>
+)
 
 export const activeSessionCountLabel = (count: number) =>
   count === 1 ? messages().pickers.session.liveSessionsOne(1) : messages().pickers.session.liveSessionsOther(count)
@@ -68,24 +91,22 @@ export const sessionRowKindAt = (index: number, liveCount: number): SessionRowKi
   return index - 1 < liveCount ? 'live' : 'history'
 }
 
-export const relativeSessionAge = (ts?: number) => {
+/** Compact localized "3h ago" for an epoch-seconds timestamp; '' when unknown. */
+export const relativeSessionAge = (ts?: number, nowMs = Date.now()) => {
   if (!ts) {
     return ''
   }
 
-  const days = (Date.now() / 1000 - ts) / 86400
+  const secs = Math.max(0, nowMs / 1000 - ts)
+  const rtf = new Intl.RelativeTimeFormat(getLocale(), { numeric: 'auto', style: 'narrow' })
 
-  const age = messages().pickers.session.age
-
-  if (days < 1) {
-    return age.today
+  for (const [unit, size] of AGE_UNITS) {
+    if (secs >= size) {
+      return rtf.format(-Math.floor(secs / size), unit)
+    }
   }
 
-  if (days < 2) {
-    return age.yesterday
-  }
-
-  return age.daysAgo(Math.floor(days))
+  return rtf.format(0, 'second')
 }
 
 /** Drop already-live sessions from the resumable history list (dedupe by id). */
@@ -717,6 +738,15 @@ export function ActiveSessionSwitcher({
 
       {err && <Text color={t.color.label}>{C.error(err)}</Text>}
 
+      <Text color={t.color.muted} wrap="truncate-end">
+        {'    '.padEnd(7)}
+        {S.column.id.padEnd(11)}
+        {S.column.status.padEnd(11)}
+        {S.column.created.padEnd(9)}
+        {S.column.modified.padEnd(9)}
+        {S.column.title}
+      </Text>
+
       <Box backgroundColor={newRowStyle?.backgroundColor} flexDirection="row" onClick={handleRowClick(0)} width="100%">
         <Text bold={newSelectedRow} color={newRowTextColor ?? t.color.muted}>
           {newSelectedRow ? '▸ ' : '  '}
@@ -798,15 +828,11 @@ export function ActiveSessionSwitcher({
 
               <Box {...fixedSessionColumnStyle()} width={11}>
                 <Text color={rowTextColor ?? t.color.muted} wrap="truncate-end">
-                  {relativeSessionAge(h.started_at)}
+                  {S.row.closed}
                 </Text>
               </Box>
 
-              <Box {...fixedSessionColumnStyle()} width={18}>
-                <Text color={rowTextColor ?? t.color.muted} wrap="truncate-end">
-                  {S.row.messageCount(h.message_count ?? 0)}
-                </Text>
-              </Box>
+              <SessionAgeColumns color={rowTextColor ?? t.color.muted} created={h.started_at} modified={h.last_active} />
 
               <Box flexGrow={1} flexShrink={1} minWidth={0}>
                 <Text
@@ -866,11 +892,7 @@ export function ActiveSessionSwitcher({
               </Text>
             </Box>
 
-            <Box {...fixedSessionColumnStyle()} width={18}>
-              <Text color={rowTextColor ?? t.color.muted} wrap="truncate-end">
-                {shortModel(s.model)}
-              </Text>
-            </Box>
+            <SessionAgeColumns color={rowTextColor ?? t.color.muted} created={s.started_at} modified={s.last_active} />
 
             <Box flexGrow={1} flexShrink={1} minWidth={0}>
               <Text bold={selected} color={rowTextColor ?? t.color.muted} wrap="truncate-end">

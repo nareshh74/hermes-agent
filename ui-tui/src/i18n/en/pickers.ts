@@ -97,10 +97,12 @@ export const pickersEn = {
       liveSessionsOther: (count: number) => `${count} live sessions`,
       // {0} = live session count, {1} = resumable session count.
       counts: (liveCount: number, resumableCount: number) => `${liveCount} live · ${resumableCount} resumable`,
-      age: {
-        today: 'today',
-        yesterday: 'yesterday',
-        daysAgo: (days: number) => `${days}d ago`
+      column: {
+        id: 'id',
+        status: 'status',
+        created: 'created',
+        modified: 'modified',
+        title: 'title'
       },
       status: {
         idle: 'idle',
@@ -121,7 +123,7 @@ export const pickersEn = {
         closing: 'closing…',
         deleting: 'deleting…',
         pressDAgain: 'press d again to delete',
-        messageCount: (count: number) => `${count} msgs`
+        closed: 'closed'
       },
       noOtherSessions: 'no other sessions — Enter on +new to start one',
       promptLabel: 'prompt › ',

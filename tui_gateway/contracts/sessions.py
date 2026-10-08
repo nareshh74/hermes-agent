@@ -234,6 +234,7 @@ class SessionListRow(Result):
     title: str = ""
     preview: str = ""
     started_at: float = 0
+    last_active: float = 0
     message_count: int = 0
     live_message_count: int | None = None
     source: str = ""
