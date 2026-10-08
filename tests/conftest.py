@@ -307,6 +307,7 @@ def _hermetic_environment(tmp_path, tmp_path_factory, monkeypatch):
     (fake_hermes_home / "memories").mkdir()
     (fake_hermes_home / "skills").mkdir()
     monkeypatch.setenv("HERMES_HOME", str(fake_hermes_home))
+    monkeypatch.setenv("COPILOT_HOME", str(tmp_path / "copilot_test"))  # keep ~/.copilot/mcp-config.json out
     # A test that pins the process home (hermes_constants.pin_process_hermes_home) must not
     # leak that module-global into the next test's routed-profile decisions.
     try:

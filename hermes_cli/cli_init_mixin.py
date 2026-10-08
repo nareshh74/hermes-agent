@@ -218,7 +218,8 @@ class CLIInitMixin:
 
         if toolsets and "all" not in toolsets and "*" not in toolsets:
             # MCP server names only resolve after discover_mcp_tools runs; skip them here.
-            mcp_names = set((CLI_CONFIG.get("mcp_servers") or {}).keys())
+            from hermes_cli.tools_config import enabled_mcp_server_names
+            mcp_names = set((CLI_CONFIG.get("mcp_servers") or {}).keys()) | enabled_mcp_server_names(CLI_CONFIG)
             # Plugin toolsets register during plugin discovery, which startup runs on a background thread
             # that has not necessarily landed yet; names it declared (or the previous launch persisted, which
             # get_plugin_toolset_keys_nowait serves) are not typos (#71650).

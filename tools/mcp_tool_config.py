@@ -553,6 +553,23 @@ def _copilot_to_hermes_mcp(cfg: dict) -> dict:
     return out
 
 
+def _copilot_user_mcp_servers() -> Dict[str, dict]:
+    """Servers from Copilot CLI's user config (``$COPILOT_HOME`` or ``~/.copilot``)/``mcp-config.json``.
+    The user owns this file like config.yaml, so it is trusted and fully interpolated."""
+    path = Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "mcp-config.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        logger.warning("Ignoring Copilot MCP config %s: %s", path, exc)
+        return {}
+    entries = data.get("mcpServers") if isinstance(data, dict) else None
+    if not isinstance(entries, dict):
+        return {}
+    return {n: _copilot_to_hermes_mcp(c) for n, c in entries.items() if isinstance(c, dict)}
+
+
 def _project_mcp_servers() -> Dict[str, dict]:
     """Servers from Copilot-style ``.mcp.json`` / ``.github/mcp.json`` files between the cwd and the
     project root. Repo files can launch arbitrary commands, so only roots in
@@ -615,6 +632,8 @@ def _load_mcp_config() -> Dict[str, dict]:
             if isinstance(interpolated, dict):
                 _warn_hidden_whitespace(name, interpolated)
                 safe_servers[name] = interpolated
+        for name, cfg in _filter_suspicious_mcp_servers(_copilot_user_mcp_servers()).items():
+            safe_servers.setdefault(name, _interpolate_env_vars(cfg))  # config.yaml wins
         _portable_mcp_servers(safe_servers)
         for name, cfg in _filter_suspicious_mcp_servers(_project_mcp_servers()).items():
             if name in safe_servers:  # user config wins
