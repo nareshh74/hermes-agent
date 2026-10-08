@@ -220,8 +220,19 @@ def _base_environment(env: Mapping[str, str] | None = None) -> dict[str, str]:
 
 _LOCK_OPTIONS = re.compile(r"(?ms)^\[options(?:\.[^\]\n]*)?\]\n.*?(?=^\[(?!options[\].]))")
 _LOCK_REGISTRY = re.compile(r'(?m)^source = \{ registry = "([^"]+)" \}')
+# Also inline: ``{ name = "psutil", version = "7.2.2", source = { registry = "..." } }``.
+_LOCK_ANY_REGISTRY = re.compile(r'source = \{ registry = "([^"]*)" \}')
 _LOCK_PIN = re.compile(r'(?m)^name = "([^"]+)"\nversion = "([^"]+)"')
-_LOCK_HASH = re.compile(r"sha256:[0-9a-f]{64}")
+_LOCK_LOCATION = re.compile(r'url = "[^"]*", |, upload-time = "[^"]*"')
+
+
+def _lock_identity(text: str) -> str:
+    """The lock minus what may differ between indexes: options, registry and artifact URLs.
+
+    Every package, version, dependency edge, artifact hash and size must match.
+    """
+    text = _LOCK_OPTIONS.sub("", text, count=1)
+    return _LOCK_LOCATION.sub("", _LOCK_ANY_REGISTRY.sub('source = { registry = "" }', text))
 
 
 def managed_environment(destination: Path, *, python: Path | None = None,
@@ -372,10 +383,11 @@ class PythonEnvironment:
         an index setting alone cannot reach a network that blocks the upstream
         file host. *source* must be a writable working copy (a generated
         workspace or snapshot), never the checkout. The relock keeps every pin
-        and accepts only artifacts whose hashes the original lock already
-        recorded; the quarantine is lifted for this resolve only (the pins were
-        vetted when the original lock was made) and the original ``[options]``
-        are restored so ``--locked`` checks still see the committed policy.
+        and the lock must be identical apart from index and artifact URLs (same
+        packages, versions, edges, hashes and sizes), else the copy is restored.
+        The quarantine is lifted for this resolve only (the pins were vetted
+        when the original lock was made) and the original ``[options]`` are
+        restored so ``--locked`` checks still see the committed policy.
         """
         from pm.index_config import hermes_index_url
 
@@ -387,20 +399,21 @@ class PythonEnvironment:
         registries = set(_LOCK_REGISTRY.findall(before))
         if not registries or registries == {index}:
             return
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        # pyproject's per-package exclude-newer entries beat a global flag, so lift
-        # the cutoff per locked package too; the pin/hash check below is the guard.
-        command = ["lock", "--python", str(self.python), "--index-url", index, "--exclude-newer", now]
+        # Lift the quarantine per locked package with ``=false``, not a cutoff:
+        # mirrors often omit upload times, which any cutoff treats as too new
+        # (pyproject's defusedxml note). The identity check below is the guard.
+        command = ["lock", "--python", str(self.python), "--index-url", index]
         for name in sorted({name for name, _ in _LOCK_PIN.findall(before)}):
-            command += ["--exclude-newer-package", f"{name}={now}"]
+            command += ["--exclude-newer-package", f"{name}=false"]
         result = self._run(command, cwd=source, timeout=timeout)
         if result.returncode:
+            lock.write_bytes(before.encode("utf-8"))
             raise classify_uv_failure("lock", result.returncode, result.stderr or result.stdout)
         after = lock.read_text(encoding="utf-8")
-        if (set(_LOCK_PIN.findall(after)) != set(_LOCK_PIN.findall(before))
-                or not set(_LOCK_HASH.findall(after)) <= set(_LOCK_HASH.findall(before))):
+        if (_lock_identity(after) != _lock_identity(before)
+                or set(_LOCK_ANY_REGISTRY.findall(after)) != {index}):
             lock.write_bytes(before.encode("utf-8"))
-            raise InstallError("venv", f"{index} cannot serve the exact pins of {lock}",
+            raise InstallError("venv", f"{index} cannot serve the exact artifacts of {lock}",
                                "the index must mirror PyPI; unset HERMES_PYPI_INDEX_URL to use the lock's own URLs")
         options = _LOCK_OPTIONS.search(before)
         after = _LOCK_OPTIONS.sub("", after, count=1)
