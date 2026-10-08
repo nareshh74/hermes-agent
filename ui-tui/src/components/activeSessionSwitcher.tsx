@@ -41,6 +41,8 @@ export const sessionStatusLabel = (status: string): string => {
 }
 
 const CTRL_OFFSET = 96
+// Fits narrow relative ages in wordier locales (de "vor 12 Tagen").
+const AGE_WIDTH = 13
 
 const AGE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 365 * 86400],
@@ -57,12 +59,12 @@ export const fixedSessionColumnStyle = () => ({ flexShrink: 0 })
 
 const SessionAgeColumns = ({ color, created, modified }: { color?: string; created?: number; modified?: number }) => (
   <>
-    <Box {...fixedSessionColumnStyle()} width={9}>
+    <Box {...fixedSessionColumnStyle()} width={AGE_WIDTH}>
       <Text color={color} wrap="truncate-end">
         {relativeSessionAge(created)}
       </Text>
     </Box>
-    <Box {...fixedSessionColumnStyle()} width={9}>
+    <Box {...fixedSessionColumnStyle()} width={AGE_WIDTH}>
       <Text color={color} wrap="truncate-end">
         {relativeSessionAge(modified || created)}
       </Text>
@@ -738,14 +740,20 @@ export function ActiveSessionSwitcher({
 
       {err && <Text color={t.color.label}>{C.error(err)}</Text>}
 
-      <Text color={t.color.muted} wrap="truncate-end">
-        {'    '.padEnd(7)}
-        {S.column.id.padEnd(11)}
-        {S.column.status.padEnd(11)}
-        {S.column.created.padEnd(9)}
-        {S.column.modified.padEnd(9)}
-        {S.column.title}
-      </Text>
+      <Box flexDirection="row" width="100%">
+        {[7, 11, 11, AGE_WIDTH, AGE_WIDTH].map((w, k) => (
+          <Box {...fixedSessionColumnStyle()} key={k} width={w}>
+            <Text color={t.color.muted} wrap="truncate-end">
+              {['', S.column.id, S.column.status, S.column.created, S.column.modified][k]}
+            </Text>
+          </Box>
+        ))}
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text color={t.color.muted} wrap="truncate-end">
+            {S.column.title}
+          </Text>
+        </Box>
+      </Box>
 
       <Box backgroundColor={newRowStyle?.backgroundColor} flexDirection="row" onClick={handleRowClick(0)} width="100%">
         <Text bold={newSelectedRow} color={newRowTextColor ?? t.color.muted}>
