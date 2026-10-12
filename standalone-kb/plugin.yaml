@@ -1,0 +1,5 @@
+name: naresh-kb
+version: 0.1.0
+description: Read-only Markdown vault recall through a separately refreshed QMD index.
+author: Naresh
+kind: general
