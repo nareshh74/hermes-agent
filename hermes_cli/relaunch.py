@@ -131,7 +131,7 @@ def relaunch(
         try:
             cli_shutdown._relaunch_waiting = True
             try:
-                result = subprocess.run(new_argv)
+                result = subprocess.run(new_argv, check=False)
             finally:
                 cli_shutdown._relaunch_waiting = False
             sys.exit(result.returncode)
