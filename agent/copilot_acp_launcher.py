@@ -147,6 +147,7 @@ def probe_acp_support(
             errors="replace",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None

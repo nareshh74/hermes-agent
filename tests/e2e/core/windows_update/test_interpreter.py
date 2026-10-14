@@ -37,7 +37,7 @@ pytestmark = [pytest.mark.platforms("windows"), pytest.mark.integration,
               pytest.mark.live_system_guard_bypass, pytest.mark.real_user_environment,
               REQUIRES_OPT_IN]
 
-_WORKER_DEATH = re.compile(r"^.*Supervised task \S+ died.*$", re.M)
+_WORKER_DEATH = re.compile(r"^.*Supervised task \S+ died.*$", re.MULTILINE)
 
 
 def _system_python_dir() -> Path:
