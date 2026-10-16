@@ -10,8 +10,8 @@ import { DEFAULT_THEME } from '../theme.js'
 // The shared gateway has no `session.delete` (-32601): the picker's two-press delete is its
 // revision-fenced `session.mutate operation=delete`, and a refusal stays on screen.
 
-const stored = { id: 'old', session_id: 'old', title: 'Retained old conversation', source: 'cli', started_at: 1, message_count: 2 }
-const live = { id: 'live', session_id: 'live', title: 'Current conversation', started_at: 2, message_count: 1, running: false }
+const stored = { id: 'old', session_id: 'old', title: 'Retained history', source: 'cli', started_at: 1, message_count: 2 }
+const live = { id: 'live', session_id: 'live', title: 'Live conversation', started_at: 2, message_count: 1, running: false }
 
 function mount(mutate: (params: any) => Promise<unknown>) {
   const request = vi.fn(async (method: string, params: any) => {
@@ -59,7 +59,7 @@ function mount(mutate: (params: any) => Promise<unknown>) {
   const deleteStored = async () => {
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith('session.list', { limit: 200, scope: 'stored' }))
     instance.rerender(element)
-    await vi.waitFor(() => expect(out.text).toContain('Retained old conversation'))
+    await vi.waitFor(() => expect(out.text).toContain('Retained history'))
     stdin.write('\u001B[B')
     // Two-press delete: each retry renders between presses, so one arms and the next confirms.
     await vi.waitFor(() => {
@@ -92,8 +92,8 @@ it('deletes a stored session through session.mutate with the resume CAS tuple', 
     await vi.waitFor(() => {
       out.text = ''
       instance.rerender(React.cloneElement(element))
-      expect(out.text).toContain('Current conversation')
-      expect(out.text).not.toContain('Retained old conversation')
+      expect(out.text).toContain('Live conversation')
+      expect(out.text).not.toContain('Retained history')
     })
   } finally {
     instance.unmount()

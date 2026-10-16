@@ -16,7 +16,7 @@ it('renders and resumes stored history alongside live canonical sessions', async
             {
               id: 'old',
               session_id: 'old',
-              title: 'Retained old conversation',
+              title: 'Retained history',
               source: 'cli',
               started_at: 1,
               message_count: 2
@@ -26,7 +26,7 @@ it('renders and resumes stored history alongside live canonical sessions', async
             {
               id: 'live',
               session_id: 'live',
-              title: 'Current conversation',
+              title: 'Live conversation',
               started_at: 2,
               message_count: 1,
               running: false
@@ -62,8 +62,8 @@ it('renders and resumes stored history alongside live canonical sessions', async
   try {
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith('session.list', { limit: 200, scope: 'stored' }))
     instance.rerender(element)
-    await vi.waitFor(() => expect(output).toContain('Retained old conversation'))
-    expect(output).toContain('Current conversation')
+    await vi.waitFor(() => expect(output).toContain('Retained history'))
+    expect(output).toContain('Live conversation')
     stdin.write('\u001B[B')
     await vi.waitFor(() => {
       instance.rerender(React.cloneElement(element))
