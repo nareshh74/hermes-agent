@@ -488,6 +488,34 @@ def is_quoted_injection_phrase(finding: Finding, line: str) -> bool:
     return bool(hits) and all(any(a <= h.start() and h.end() <= b for a, b in spans) for h in hits)
 
 
+_SOURCE_WARNING = re.compile(
+    r"\s*(?:[-*]\s*)?(?:never|do\s+not)\s+"
+    r"(?:follow|obey|modify\s+your\s+behavior\s+based\s+on)\s+instructions\s+"
+    r"(?:embedded\s+in|from)\s+(?:untrusted\s+)?source\s+(?:documents|content)\s*"
+    r"\((?:e\.g\.,|for\s+example,?)\s*(?P<examples>.+)\)\.?\s*",
+    re.IGNORECASE,
+)
+
+_QUOTED_EXAMPLE_LIST = re.compile(
+    rf"(?:{_QUOTED_SPAN.pattern})(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    rf"(?:{_QUOTED_SPAN.pattern}))*",
+    re.IGNORECASE,
+)
+
+
+def is_quoted_source_safety_warning(finding: Finding, line: str) -> bool:
+    """A complete source-safety prohibition quotes examples, with no trailing directive.
+
+    Keep the finding reviewable. Quotes alone or a negation elsewhere do not establish safety.
+    """
+    if not is_quoted_injection_phrase(finding, line):
+        return False
+    warning = _SOURCE_WARNING.fullmatch(line.replace("**", ""))
+    if warning is None:
+        return False
+    return _QUOTED_EXAMPLE_LIST.fullmatch(warning.group("examples").strip()) is not None
+
+
 # ── (6) repo-root traversal in a build/setup script ─────────────────────────────────────────────
 # ``path_traversal_deep`` (``../../..``) fires on build-script repo-root resolution:
 # ``resolve(import.meta.dir, '../../..')``, ``cd "$SCRIPT_DIR/../../.."``, ``.../../../..`` — climbing
