@@ -21,13 +21,13 @@ from tools.plugin_guard_context import (
     is_disclosed_config_note, is_doc_prose, is_env_dump_in_safety_clause, is_google_installed_app_secret,
     is_hex_in_char_class, is_inert_fixture_line, is_json_prose_value, is_locale_catalog,
     is_loopback_continuation, is_loopback_only, is_pip_install_in_prose_literal,
-    is_quoted_injection_phrase, is_regex_alternation_token, is_repo_root_traversal,
+    is_quoted_injection_phrase, is_quoted_source_safety_warning, is_regex_alternation_token, is_repo_root_traversal,
     is_self_uninstall_doc, is_sudo_inert, is_test_tree, is_trusted_installer_pipe, logical_line, prose_cap)
 from tools.skills_guard import (
     Finding, ScanResult, SUSPICIOUS_BINARY_EXTENSIONS, _determine_verdict, format_scan_report,
     scan_file)
 
-PLUGIN_SCANNER_VERSION = "plugin-guard-v11"
+PLUGIN_SCANNER_VERSION = "plugin-guard-v12"
 
 # Never scanned: VCS internals, caches, vendored envs.
 EXCLUDED_DIRS = {
@@ -231,6 +231,8 @@ def _context_severity(f: Finding, rel_path: str, line: str, joined: str, doc_pro
     context (where the text lives) to the narrowest (what the token sits inside). *joined* is
     the logical shell line (``line`` plus its ``\\\\``-continuations)."""
     sev = f.severity
+    if Path(rel_path).suffix.lower() == ".md" and is_quoted_source_safety_warning(f, line):
+        sev = _at_most(sev, "high")  # A safety prohibition is still reported and requires approval.
     if doc_prose:
         sev = (catalog_cap(f) if locale_catalog else prose_cap(f)) or sev
         if is_self_uninstall_doc(f, line):
