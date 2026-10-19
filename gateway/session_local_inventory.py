@@ -95,17 +95,23 @@ def _cli_startup_notices(enabled):
     return notices
 
 
-def _unknown_toolsets(enabled, config):
+def _unknown_toolsets(enabled, config, cwd=None):
     """Main's "Unknown toolsets" startup warning (``HermesCLI._init_toolsets``), judged where the plugins
     load: the session's toolset names the profile's registry, MCP servers, plugin toolsets and platform
     bundles cannot place (an uninstalled plugin's stale ``platform_toolsets`` entry)."""
     if "all" in enabled or "*" in enabled:
         return []
-    with contextlib.suppress(Exception):
-        from hermes_cli.toolset_validation import saved_toolset_resolver
-        known = saved_toolset_resolver(config)
-        return [name for name in enabled if not known(name)]
-    return []
+    from agent.runtime_cwd import reset_session_cwd, set_session_cwd
+    cwd_token = set_session_cwd(cwd) if cwd else None
+    try:
+        with contextlib.suppress(Exception):
+            from hermes_cli.toolset_validation import saved_toolset_resolver
+            known = saved_toolset_resolver(config)
+            return [name for name in enabled if not known(name)]
+        return []
+    finally:
+        if cwd_token is not None:
+            reset_session_cwd(cwd_token)
 
 
 def _cli_skills():
@@ -133,48 +139,54 @@ def _cli_skills():
 def session_inventory(authority, policy, agent, cwd):
     """Main's banner/status fields for one session. Each section degrades to main's empty value on
     its own, so one failing builder never blanks the others (main wrapped each in ``suppress``)."""
+    from agent.runtime_cwd import reset_session_cwd, set_session_cwd
     from gateway.session_authorities import owner_scope
     from tui_gateway import git_probe
     info: dict = {"tools": {}, "skills": {}, "mcp_servers": [], "version": "", "release_date": "",
                   "update_behind": None, "update_command": "",
                   "branch": git_probe.branch(cwd) if cwd else "", "project": _project(cwd)}
-    with owner_scope(authority):
-        config = policy.config(authority, secrets=False) if policy is not None else {}
-        if agent is not None:
-            from agent.voice_turn_route import session_runtime_view
-            view = session_runtime_view(agent)
-            info["provider"] = getattr(view, "provider", "") or ""
-            info["tools"] = _grouped(getattr(agent, "tools", None))
-            info["system_prompt"] = getattr(agent, "_cached_system_prompt", "") or ""
-            compressor = getattr(agent, "context_compressor", None)
-            if compressor is not None and getattr(compressor, "context_length", None):
-                info["context_length"] = compressor.context_length
-            enabled = list(getattr(agent, "enabled_toolsets", None) or [])
-        else:
-            info["provider"] = str((config.get("model") or {}).get("provider") or "")
-            enabled = []
-            if policy is not None:
-                try:
-                    enabled, tools = _policy_tools(policy, config)
-                    info["tools"] = _grouped(tools)
-                except Exception:  # health: allow BLE001 -- main's suppress: the banner shows no tools, not an error
-                    logger.warning("session inventory: tool snapshot failed", exc_info=True)
-        info["enabled_toolsets"] = sorted(enabled)
-        with contextlib.suppress(Exception):
-            # The classic CLI banner colours lazy (yellow) / disabled (red) tools from this.
-            from hermes_cli.banner import compute_toolset_availability
-            info["tool_availability"] = compute_toolset_availability(enabled)
-        if policy is not None and policy.source == "cli":
-            info.update(_cli_startup_notices(enabled), unknown_toolsets=_unknown_toolsets(enabled, config))
-        with contextlib.suppress(Exception):
-            if policy is not None and policy.source == "cli":
-                info["skills"] = _cli_skills()
+    cwd_token = set_session_cwd(cwd) if cwd else None
+    try:
+        with owner_scope(authority):
+            config = policy.config(authority, secrets=False) if policy is not None else {}
+            if agent is not None:
+                from agent.voice_turn_route import session_runtime_view
+                view = session_runtime_view(agent)
+                info["provider"] = getattr(view, "provider", "") or ""
+                info["tools"] = _grouped(getattr(agent, "tools", None))
+                info["system_prompt"] = getattr(agent, "_cached_system_prompt", "") or ""
+                compressor = getattr(agent, "context_compressor", None)
+                if compressor is not None and getattr(compressor, "context_length", None):
+                    info["context_length"] = compressor.context_length
+                enabled = list(getattr(agent, "enabled_toolsets", None) or [])
             else:
-                from hermes_cli.banner import get_available_skills
-                info["skills"] = get_available_skills()
-        with contextlib.suppress(Exception):
-            from tools.mcp_tool_discovery import get_mcp_status
-            info["mcp_servers"] = get_mcp_status()
+                info["provider"] = str((config.get("model") or {}).get("provider") or "")
+                enabled = []
+                if policy is not None:
+                    try:
+                        enabled, tools = _policy_tools(policy, config)
+                        info["tools"] = _grouped(tools)
+                    except Exception:  # health: allow BLE001 -- main's suppress: the banner shows no tools, not an error
+                        logger.warning("session inventory: tool snapshot failed", exc_info=True)
+            info["enabled_toolsets"] = sorted(enabled)
+            with contextlib.suppress(Exception):
+                # The classic CLI banner colours lazy (yellow) / disabled (red) tools from this.
+                from hermes_cli.banner import compute_toolset_availability
+                info["tool_availability"] = compute_toolset_availability(enabled)
+            if policy is not None and policy.source == "cli":
+                info.update(_cli_startup_notices(enabled), unknown_toolsets=_unknown_toolsets(enabled, config, cwd=cwd))
+            with contextlib.suppress(Exception):
+                if policy is not None and policy.source == "cli":
+                    info["skills"] = _cli_skills()
+                else:
+                    from hermes_cli.banner import get_available_skills
+                    info["skills"] = get_available_skills()
+            with contextlib.suppress(Exception):
+                from tools.mcp_tool_discovery import get_mcp_status
+                info["mcp_servers"] = get_mcp_status()
+    finally:
+        if cwd_token is not None:
+            reset_session_cwd(cwd_token)
     with contextlib.suppress(Exception):
         from hermes_cli import __release_date__
         from hermes_cli.version_info import get_version_info
