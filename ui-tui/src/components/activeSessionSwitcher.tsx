@@ -542,7 +542,13 @@ export function ActiveSessionSwitcher({
       const closed = Boolean(result?.closed ?? result?.ok)
 
       if (!closed) {
-        setActionErr(messages().pickers.session.errors.alreadyClosed)
+        // A canonical view closes only what it holds: a null answer means no close was attempted, not
+        // that main refused one. Only a receipt can say the session was already closed.
+        setActionErr(
+          gw.isCanonical && result === null
+            ? messages().pickers.session.errors.notAttached
+            : messages().pickers.session.errors.alreadyClosed
+        )
 
         return
       }
@@ -562,7 +568,7 @@ export function ActiveSessionSwitcher({
     } finally {
       setClosingId('')
     }
-  }, [closingId, currentSessionId, history.length, items, load, onClose, onNew, onSelect, rowKind, sel])
+  }, [closingId, currentSessionId, gw.isCanonical, history.length, items, load, onClose, onNew, onSelect, rowKind, sel])
 
   const performDelete = useCallback(
     (id: string) => {
