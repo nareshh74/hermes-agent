@@ -83,3 +83,28 @@ def test_project_servers_enabled_for_toolset_resolution(tmp_path, monkeypatch):
     (tmp_path / "u").mkdir()
     _setup(tmp_path / "u", monkeypatch, trusted=False)
     assert "docs" not in enabled_mcp_server_names({"mcp_servers": {}})
+
+
+def test_gateway_build_policy_resolves_project_mcp_in_session_cwd(tmp_path, monkeypatch):
+    """When the gateway daemon runs in another directory, session.create (build_policy) and
+    _unknown_toolsets must bind the session's cwd so trusted project .mcp.json servers validate."""
+    from gateway.session_local_inventory import _unknown_toolsets
+    from gateway.session_policy import build_policy
+    from hermes_cli.config import load_config
+
+    _setup(tmp_path, monkeypatch, trusted=True)
+    daemon_cwd = tmp_path / "daemon_cwd"
+    daemon_cwd.mkdir()
+    monkeypatch.chdir(daemon_cwd)  # daemon cwd is NOT the project dir
+    cfg = load_config()
+    sub_cwd = str(tmp_path / "proj" / "sub")
+    policy = build_policy(
+        {"source": "cli", "cwd": sub_cwd, "toolsets": ["terminal", "docs", "mcp-gh"]},
+        cfg,
+        private_secrets={},
+    )
+    assert {"terminal", "docs", "gh"} <= set(policy.toolsets)
+    assert _unknown_toolsets(list(policy.current_toolsets(cfg)), cfg, cwd=sub_cwd) == []
+
+
+

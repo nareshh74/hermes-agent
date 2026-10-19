@@ -225,7 +225,12 @@ class LocalSessionPolicy:
             return self.toolsets
         # The workspace decision is the creation-time one: a project file the agent writes mid-session must
         # not switch this conversation's toolsets (prompt cache). Only a profile change (``focus`` off) does.
-        return tuple(sorted(_resolve_toolsets({}, config, self.source, self.safe_mode, self.coding_posture)))
+        from agent.runtime_cwd import reset_session_cwd, set_session_cwd
+        cwd_token = set_session_cwd(self.cwd)
+        try:
+            return tuple(sorted(_resolve_toolsets({}, config, self.source, self.safe_mode, self.coding_posture)))
+        finally:
+            reset_session_cwd(cwd_token)
 
     def current_reasoning_config(self, runner, session_key=None):
         """The next turn's reasoning: a typed session /reasoning (the messaging handler's override), else
@@ -428,7 +433,12 @@ def build_policy(params, config, *, private_secrets=None, profile_terminal=True,
     # pick wins anyway; skipping it here also spares the probe.
     named = workspace_posture and source != 'tool' and 'cwd' in params and 'toolsets' not in params
     coding_posture = named and _in_coding_workspace(config, source, cwd)
-    enabled = _resolve_toolsets(params, config, source, safe_mode, coding_posture, bypass=ignore_user_config)
+    from agent.runtime_cwd import reset_session_cwd, set_session_cwd
+    cwd_token = set_session_cwd(cwd)
+    try:
+        enabled = _resolve_toolsets(params, config, source, safe_mode, coding_posture, bypass=ignore_user_config)
+    finally:
+        reset_session_cwd(cwd_token)
     terminal = build_profile_terminal_scope(get_hermes_home()) if profile_terminal else default_terminal_scope()
     # The client's launch folder is a path on THIS host: a remote or container backend keeps its own
     # configured cwd unless the user picked this folder for the session.
