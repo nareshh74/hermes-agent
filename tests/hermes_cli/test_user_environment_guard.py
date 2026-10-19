@@ -11,8 +11,12 @@ import pytest
 
 if os.name == "nt":
     import winreg
+    from hermes_cli import _install_repair, _launchers
 
-    # Captured at import, before any fixture patches the module: the real API.
+    # Capture the writers before the high-level tripwire replaces them. These
+    # guard tests call the originals only after verifying the registry sandbox.
+    _REGISTER_USER_PATH = _launchers._register_windows_user_path
+    _WRITE_USER_PATH = _install_repair._write_user_path_raw
     _REAL_OPEN = winreg.OpenKey
     _REAL_QUERY = winreg.QueryValueEx
     _REAL_SET = winreg.SetValueEx
@@ -34,15 +38,13 @@ def _require_guard() -> None:
 
 @pytest.mark.platforms("windows")
 def test_launcher_user_path_registration_stays_in_the_sandbox(tmp_path):
-    from hermes_cli import _launchers
-
     _require_guard()
     entry = tmp_path / "bin"
     saved = _real_user_path()
-    assert _launchers._register_windows_user_path(entry) == "added"
+    assert _REGISTER_USER_PATH(entry) == "added"
     assert _real_user_path() == saved
     # Code under test still reads back its own write through the sandbox.
-    assert _launchers._register_windows_user_path(entry) == "present"
+    assert _REGISTER_USER_PATH(entry) == "present"
 
 
 @pytest.mark.platforms("windows")
@@ -52,7 +54,7 @@ def test_install_repair_user_path_write_stays_in_the_sandbox(tmp_path):
     _require_guard()
     saved = _real_user_path()
     entries, kind = _install_repair._read_user_path_raw()
-    _install_repair._write_user_path_raw([str(tmp_path / "bin"), *entries], kind)
+    _WRITE_USER_PATH([str(tmp_path / "bin"), *entries], kind)
     assert _real_user_path() == saved
     assert _install_repair._read_user_path_raw()[0][0] == str(tmp_path / "bin")
 
