@@ -617,10 +617,12 @@ import {
 import {
   launcherInstallRoot,
   observeUpdaterHandoff,
+  packagedCheckoutRoot,
   repairMacUpdaterHelper,
   resolveInstallationLauncher,
   resolveStagedUpdaterBinary,
   resolveVenvDir,
+  selectUpdateRoot,
   spawnUpdaterProcess,
   stagedUpdaterSupportsPrewrittenMarker,
   userLauncherInstallRoot
@@ -1329,7 +1331,7 @@ let desktopSshPathOverride = ''
 // install.ps1 / install.sh use, so a desktop-only user and a CLI-only user end
 // up with identical layouts and can share one install.
 const ACTIVE_HERMES_ROOT = path.join(HERMES_HOME, 'hermes-agent')
-setNoConsoleGitRoots([!IS_PACKAGED ? SOURCE_REPO_ROOT : null, ACTIVE_HERMES_ROOT])
+setNoConsoleGitRoots([!IS_PACKAGED ? SOURCE_REPO_ROOT : packagedCheckoutRoot(process.execPath, isHermesSourceRoot), ACTIVE_HERMES_ROOT])
 // VENV_ROOT — venv lives inside the repo, exactly like install.ps1 does it.
 const VENV_ROOT = path.join(ACTIVE_HERMES_ROOT, 'venv')
 // BOOTSTRAP_COMPLETE_MARKER — written by the first-launch bootstrap runner
@@ -3478,13 +3480,7 @@ function writeZoomState(zoomLevel) {
 // Dev → SOURCE_REPO_ROOT. Packaged/CLI install → ACTIVE_HERMES_ROOT.
 // HERMES_DESKTOP_HERMES_ROOT always wins so devs can pin a worktree.
 function resolveUpdateRoot() {
-  const candidates = [
-    process.env.HERMES_DESKTOP_HERMES_ROOT && path.resolve(process.env.HERMES_DESKTOP_HERMES_ROOT),
-    !IS_PACKAGED && isHermesSourceRoot(SOURCE_REPO_ROOT) ? SOURCE_REPO_ROOT : null,
-    isHermesSourceRoot(ACTIVE_HERMES_ROOT) ? ACTIVE_HERMES_ROOT : null
-  ].filter(Boolean)
-
-  return candidates.find(isGitCheckout) || candidates[0] || ACTIVE_HERMES_ROOT
+  return selectUpdateRoot({ isPackaged: IS_PACKAGED, sourceRepoRoot: SOURCE_REPO_ROOT, activeHermesRoot: ACTIVE_HERMES_ROOT, isSourceRoot: isHermesSourceRoot, isGitCheckout })
 }
 
 function emitUpdateProgress(payload) {

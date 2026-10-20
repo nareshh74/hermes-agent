@@ -365,7 +365,7 @@ def prepare_launch(project_root: Path, argv: list[str]) -> Path | None:
     from hermes_cli.steward import read_install_stamp
 
     command = command_argv(argv)
-    if (command[:1] == ["pm"]
+    if (command[:1] in (["pm"], ["update"])
             or _METADATA_FLAGS & set(argv)
             # This is the recovery path shown by the Desktop when a pending update has
             # fenced the gateway. Completing that same tail first can take minutes and

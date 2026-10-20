@@ -595,3 +595,23 @@ def test_failed_tail_attempt_is_counted_and_success_clears_it(source_launch, tmp
     assert not completion_pending_path(root).exists()
     assert not _completion_attempts_path(root).exists(), "success cleared the attempt record"
 
+
+def test_update_command_skips_prepare_launch_and_preserves_delegate_marker(tmp_path, monkeypatch):
+    """`hermes update` owns the update lock and completion tail; prepare_launch must not
+    pre-acquire/release the marker and strip the hand-off script's delegate line before cmd_update."""
+    from hermes_cli.update_lock import process_create_time, update_marker_path
+
+    root = tmp_path / "checkout"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "hermes"\nversion = "0"\n', encoding="utf-8")
+    (root / "install-stamp.json").write_text('{"updateMechanism": "self"}', encoding="utf-8")
+    marker = update_marker_path()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    ct = process_create_time()
+    raw = f"999999\n1700000000\nct:1700000000.000\ndelegate:{os.getpid()} ct:{ct:.3f}\n".encode()
+    marker.write_bytes(raw)
+
+    assert venv_sync.prepare_launch(root, ["update", "--yes", "--gateway"]) is None
+    assert marker.read_bytes() == raw
+
+

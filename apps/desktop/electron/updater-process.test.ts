@@ -14,10 +14,12 @@ import {
   launcherInstallRoot,
   MARKER_SELF_ADOPT_EPOCH_MS,
   observeUpdaterHandoff,
+  relaunchExecutableForUpdate,
   resolvePosixScriptHandoff,
   resolveStagedUpdaterBinary,
   resolveUpdateScriptHandoff,
   sandboxFallbackFromEnv,
+  selectUpdateRoot,
   spawnUpdaterProcess,
   stagedUpdaterSupportsPrewrittenMarker,
   wrapHandoffForDetachedConsole
@@ -558,3 +560,47 @@ async function writeLauncher(dir: string, body: string): Promise<string> {
 
   return file
 }
+
+test('selectUpdateRoot prefers HERMES_DESKTOP_HERMES root and packaged slot checkout over ACTIVE_HERMES_ROOT', async () => {
+  const dir = await realpathMkdtemp('update-root-')
+  const slotA = path.join(dir, 'slots', 'slot-a')
+  const slotB = path.join(dir, 'slots', 'slot-b')
+  const active = path.join(dir, 'hermes-agent')
+  const slotAExe = path.join(slotA, 'apps', 'desktop', 'release', 'win-unpacked', 'Hermes.exe')
+  const slotBExe = path.join(slotB, 'apps', 'desktop', 'release', 'win-unpacked', 'Hermes.exe')
+  await fs.mkdir(path.dirname(slotBExe), { recursive: true })
+  await fs.writeFile(slotBExe, '')
+  const validRoots = new Set([slotA, slotB, active])
+
+  try {
+    assert.equal(
+      selectUpdateRoot({
+        isPackaged: true,
+        sourceRepoRoot: slotA,
+        overrideLauncher: 'C:\\hermes\\launch\\hermes.cmd',
+        execPath: slotAExe,
+        activeHermesRoot: active,
+        isSourceRoot: candidate => validRoots.has(candidate),
+        isGitCheckout: candidate => validRoots.has(candidate),
+        resolveLauncherRoot: () => slotB
+      }),
+      slotB
+    )
+    assert.equal(
+      selectUpdateRoot({
+        isPackaged: true,
+        sourceRepoRoot: slotA,
+        overrideLauncher: null,
+        execPath: slotAExe,
+        activeHermesRoot: active,
+        isSourceRoot: candidate => validRoots.has(candidate),
+        isGitCheckout: candidate => validRoots.has(candidate)
+      }),
+      slotA
+    )
+    assert.equal(relaunchExecutableForUpdate(slotB, slotAExe), slotBExe)
+    assert.equal(relaunchExecutableForUpdate(active, slotAExe), slotAExe)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
