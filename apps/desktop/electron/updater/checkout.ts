@@ -17,6 +17,7 @@ import {
   describeUpdaterHandoffFailure,
   killHandoffTree,
   observeUpdaterHandoff,
+  relaunchExecutableForUpdate,
   resolveInstallationLauncher,
   resolvePosixScriptHandoff,
   resolveUpdateScriptHandoff,
@@ -570,7 +571,7 @@ export function createCheckoutStrategy(deps: CheckoutStrategyDeps): CheckoutStra
         '-DesktopPid',
         String(process.pid),
         '-RelaunchExe',
-        process.execPath
+        relaunchExecutableForUpdate(updateRoot, process.execPath)
       ]
 
       // Same remote-ownership rule as the posix hand-off (#117529): a

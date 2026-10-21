@@ -131,7 +131,82 @@ export function launcherTargetsInstallation(launcher: string, root: string): boo
 // neither permanent nor re-spawned on every resolve.
 export const LAUNCHER_ROOT_MISS_TTL_MS = 60_000
 const launcherInstallRoots = new Map<string, Promise<string | undefined>>()
+const resolvedLauncherInstallRoots = new Map<string, string>()
 const launcherRootMisses = new Map<string, number>()
+
+export function cachedLauncherInstallRoot(launcher: string): string | undefined {
+  return resolvedLauncherInstallRoots.get(launcher) ?? resolvedLauncherInstallRoots.get(path.resolve(launcher))
+}
+
+export interface ResolveUpdateRootOptions {
+  envRoot?: string
+  isPackaged: boolean
+  sourceRepoRoot: string
+  overrideLauncher?: string | null
+  execPath?: string
+  activeHermesRoot: string
+  isSourceRoot: (dir: string) => boolean
+  isGitCheckout: (dir: string) => boolean
+  resolveLauncherRoot?: (launcher: string) => string | null | undefined
+}
+
+export function packagedCheckoutRoot(
+  execPath: string = process.execPath,
+  isSourceRoot?: (dir: string) => boolean
+): string | null {
+  if (!execPath) {
+    return null
+  }
+
+  const root: string = path.resolve(path.dirname(execPath), '../../../..')
+
+  return !isSourceRoot || isSourceRoot(root) ? root : null
+}
+
+export function selectUpdateRoot(opts: ResolveUpdateRootOptions): string {
+  const envRoot: string | undefined = opts.envRoot ?? process.env.HERMES_DESKTOP_HERMES_ROOT
+
+  const overrideLauncher: string | null | undefined =
+    opts.overrideLauncher !== undefined ? opts.overrideLauncher : process.env.HERMES_DESKTOP_HERMES
+
+  const execPath: string | undefined = opts.execPath ?? process.execPath
+
+  const overrideRoot: string | null = overrideLauncher
+    ? ((opts.resolveLauncherRoot ?? cachedLauncherInstallRoot)(overrideLauncher) ?? null)
+    : null
+
+  const packagedRepoRoot: string | null = opts.isPackaged
+    ? packagedCheckoutRoot(execPath, opts.isSourceRoot)
+    : null
+
+  const candidates: string[] = [
+    envRoot ? path.resolve(envRoot) : null,
+    !opts.isPackaged && opts.isSourceRoot(opts.sourceRepoRoot) ? opts.sourceRepoRoot : null,
+    overrideRoot && opts.isSourceRoot(overrideRoot) ? overrideRoot : null,
+    packagedRepoRoot,
+    opts.isSourceRoot(opts.activeHermesRoot) ? opts.activeHermesRoot : null
+  ].filter((candidate): candidate is string => Boolean(candidate))
+
+  return candidates.find(opts.isGitCheckout) || candidates[0] || opts.activeHermesRoot
+}
+
+export function relaunchExecutableForUpdate(
+  updateRoot: string,
+  execPath: string = process.execPath
+): string {
+  const normalized: string = path.normalize(execPath)
+  const suffix: string = path.join('apps', 'desktop', 'release', 'win-unpacked', path.basename(normalized))
+
+  if (normalized.toLowerCase().endsWith(suffix.toLowerCase())) {
+    const candidate: string = path.join(updateRoot, suffix)
+
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return execPath
+}
 
 /** The root a launcher reports, memoized: ticketRuntimeFor() mints gateway
  *  tickets from a command backend only when it names its installation root. */
@@ -154,6 +229,8 @@ export function launcherInstallRoot(launcher: string): Promise<string | undefine
     }
 
     launcherRootMisses.delete(launcher)
+    resolvedLauncherInstallRoots.set(launcher, root)
+    resolvedLauncherInstallRoots.set(path.resolve(launcher), root)
 
     return root
   })

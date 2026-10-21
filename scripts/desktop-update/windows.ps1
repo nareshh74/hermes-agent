@@ -748,6 +748,7 @@ function Start-DesktopRelaunch {
     # finally block downgrades the on-screen/on-disk outcome when it didn't
     # — the sibling truth contract to posix.sh's launch acceptance.
     if (-not $RelaunchExe) { return $false }
+    Remove-Item Env:HERMES_UPDATE_HANDOFF_PID, Env:HERMES_UPDATE_STARTED_AT, Env:HERMES_UPDATE_CORRELATION_ID -ErrorAction SilentlyContinue
     # electron-builder replaces win-unpacked in place. After a successful
     # update it can remove the old Hermes.exe before writing the replacement,
     # so a one-shot existence check races the rebuild and strands the user.
@@ -1499,6 +1500,7 @@ try {
         exit 0
     }
     Start-MarkerCustodian
+    $env:HERMES_UPDATE_HANDOFF_PID = [string]$(if ($script:MarkerOwner) { $script:MarkerOwner.Pid } else { $PID })
 
     # StartAssigned passes a null CreateProcess currentDirectory, so children
     # inherit the hand-off process directory rather than PowerShell's $PWD.

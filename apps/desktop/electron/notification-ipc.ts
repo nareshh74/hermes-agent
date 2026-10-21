@@ -1,10 +1,44 @@
-import { BrowserWindow, ipcMain, Notification } from 'electron'
+import { existsSync, rmSync } from 'node:fs'
+import path from 'node:path'
+
+import { BrowserWindow, ipcMain, Notification, shell } from 'electron'
 
 import { createEventDeduper } from './event-dedupe'
 import { resolveNotificationAction } from './notification-actions'
 import { createLinuxNotifications } from './notification-linux'
 import { createNotificationRegistry } from './notification-registry'
 import type { HermesNotification } from './notification-types'
+
+function preserveExternalWindowsShortcut(platform: NodeJS.Platform): (() => void) | null {
+  if (platform !== 'win32' || !process.env.APPDATA) {
+    return null
+  }
+
+  const lnk = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Hermes.lnk')
+
+  try {
+    const prev = existsSync(lnk) ? shell.readShortcutLink?.(lnk) : null
+
+    if (!prev?.target || !existsSync(prev.target)) {
+      return null
+    }
+
+    if (path.normalize(prev.target).toLowerCase() === path.normalize(process.execPath).toLowerCase()) {
+      return null
+    }
+
+    return () => {
+      try {
+        rmSync(lnk, { force: true })
+        shell.writeShortcutLink?.(lnk, 'create', prev)
+      } catch {
+        // Ignore shortcut write races while Explorer holds the link.
+      }
+    }
+  } catch {
+    return null
+  }
+}
 
 interface NotificationHost {
   getMainWindow: () => BrowserWindow | null
@@ -50,6 +84,7 @@ export function registerNativeNotifications({
       actions: actions.map(action => ({ type: 'button' as const, text: String(action?.text || '') }))
     }
 
+    const restoreShortcut = preserveExternalWindowsShortcut(platform)
     const notification = linux ? linux.create(options) : new Notification(options)
 
     notification.on('click', () => {
@@ -110,7 +145,10 @@ export function registerNativeNotifications({
     notifications.retain(notification)
 
     // Peers share the actual outcome, including pending/failed Linux delivery.
-    const delivery = Promise.resolve(notification.show()).then(result => result !== false)
+    const delivery = Promise.resolve(notification.show())
+      .then(result => result !== false)
+      .finally(() => restoreShortcut?.())
+
     deliveries.set(key, delivery)
     setTimeout(() => {
       if (deliveries.get(key) === delivery) {

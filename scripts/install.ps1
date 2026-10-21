@@ -1536,6 +1536,9 @@ function New-DesktopShortcuts {
                 if (-not (Test-Path $parent)) {
                     New-Item -ItemType Directory -Force -Path $parent | Out-Null
         }
+                if (Test-Path -LiteralPath $lnkPath) {
+                    Remove-Item -LiteralPath $lnkPath -Force -ErrorAction SilentlyContinue
+                }
                 $sc = $shell.CreateShortcut($lnkPath)
                 $sc.TargetPath = $TargetExe
                 $sc.WorkingDirectory = $workDir
