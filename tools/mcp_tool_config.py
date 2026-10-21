@@ -629,31 +629,58 @@ def _warn_hidden_whitespace(server_name: str, config: dict) -> list[str]:
     return flagged
 
 
+def _malformed_cost_table(name: str, cfg: Any) -> Optional[str]:
+    """Why a server's ``tool_costs``/``spend_limit``/``cost_unit`` is unusable, else None. A budget the
+    user declared must never be silently dropped while its server keeps spending, so the server is skipped."""
+    from tools.mcp_tool_costs import config_cost_policy
+    try:
+        config_cost_policy(name, cfg if isinstance(cfg, dict) else None)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
 def _filter_suspicious_mcp_servers(servers: dict[str, dict]) -> dict[str, dict]:
-    """Drop exfiltration-shaped MCP configs before any stdio spawn path."""
+    """Drop exfiltration-shaped MCP configs, and servers with a malformed cost table, before any stdio spawn path."""
     try:
         from hermes_cli.mcp_security import validate_mcp_server_entry
     except Exception:
-        return servers
+        validate_mcp_server_entry = None
     safe_servers = {}
     for name, cfg in servers.items():
-        issues = validate_mcp_server_entry(name, cfg) if isinstance(cfg, dict) else None
+        issues = validate_mcp_server_entry(name, cfg) if validate_mcp_server_entry and isinstance(cfg, dict) else None
         if issues:
             logger.warning("Skipping suspicious MCP server '%s': %s", name, "; ".join(issues))
+        elif (bad_costs := _malformed_cost_table(name, cfg)) is not None:
+            logger.error("Skipping MCP server '%s': %s (fix tool_costs/spend_limit/cost_unit in config.yaml)",
+                         name, bad_costs)
         else:
             safe_servers[name] = cfg
     return safe_servers
 
 
-def _portable_mcp_servers(safe_servers: dict[str, dict]) -> None:
-    """Merge plugin-provided (portable) MCP servers into *safe_servers*; native config wins on a clash. Never raises."""
+def _portable_mcp_servers(safe_servers: dict[str, dict], rejected: frozenset[str] = frozenset()) -> None:
+    """Merge plugin-provided (portable) MCP servers into *safe_servers*; native config wins on a clash. Never raises.
+
+    The package's declared costs are facts about its server, so a same-name native entry (the way a user widens
+    a package server's trust) keeps them unless it sets the cost key itself; ``spend_limit: 0`` turns the limit off."""
+    from tools.mcp_tool_costs import CONFIG_KEYS
     try:
         from hermes_cli.plugins import discover_plugins, get_plugin_manager
         discover_plugins()
         portable = get_plugin_manager().get_portable_mcp_servers()
         for name, cfg in _filter_suspicious_mcp_servers(portable).items():
-            if name in safe_servers:
-                logger.warning("Portable MCP server '%s' conflicts with native config; skipping", name)
+            if name in rejected:  # the user's own entry for this name has a malformed budget: stay off
+                logger.warning("Portable MCP server '%s' skipped: the native entry of that name was rejected", name)
+            elif name in safe_servers:
+                native = safe_servers[name]
+                carried = {k: cfg[k] for k in CONFIG_KEYS if k in cfg and k not in native}
+                if carried:
+                    safe_servers[name] = {**native, **carried}
+                    logger.warning("Portable MCP server '%s' conflicts with native config; using the native entry "
+                                   "with the package's declared %s", name, ", ".join(carried))
+                else:
+                    logger.warning("Portable MCP server '%s' conflicts with native config; skipping", name)
             else:
                 safe_servers[name] = dict(cfg)
     except Exception:
@@ -675,7 +702,7 @@ def _copilot_to_hermes_mcp(cfg: dict) -> dict:
     return out
 
 
-def _copilot_user_mcp_servers() -> Dict[str, dict]:
+def _copilot_user_mcp_servers() -> dict[str, dict]:
     """Servers from Copilot CLI's user config (``$COPILOT_HOME`` or ``~/.copilot``)/``mcp-config.json``.
     The user owns this file like config.yaml, so it is trusted and fully interpolated."""
     path = Path(os.environ.get("COPILOT_HOME") or Path.home() / ".copilot") / "mcp-config.json"
@@ -692,7 +719,7 @@ def _copilot_user_mcp_servers() -> Dict[str, dict]:
     return {n: _copilot_to_hermes_mcp(c) for n, c in entries.items() if isinstance(c, dict)}
 
 
-def _project_mcp_servers() -> Dict[str, dict]:
+def _project_mcp_servers() -> dict[str, dict]:
     """Servers from Copilot-style ``.mcp.json`` / ``.github/mcp.json`` files between the cwd and the
     project root. Repo files can launch arbitrary commands, so only roots in
     ``mcp.trusted_project_dirs`` are read (skill trust does not grant this). Closer files win.
@@ -705,7 +732,7 @@ def _project_mcp_servers() -> Dict[str, dict]:
     if root is None:
         return {}
     norm_root = os.path.normcase(os.path.realpath(root))
-    servers: Dict[str, dict] = {}
+    servers: dict[str, dict] = {}
     cur = Path(os.path.realpath(resolve_agent_cwd()))
     while True:
         norm_cur = os.path.normcase(str(cur))
@@ -752,15 +779,22 @@ def _load_mcp_config() -> dict[str, dict]:
         except Exception:
             pass
         safe_servers: dict[str, dict] = {}
-        for name, cfg in _filter_suspicious_mcp_servers(servers if isinstance(servers, dict) else {}).items():
+        servers = servers if isinstance(servers, dict) else {}
+        kept = _filter_suspicious_mcp_servers(servers)
+        for name, cfg in kept.items():
             interpolated = _interpolate_env_vars(cfg)
             if isinstance(interpolated, dict):
                 _warn_hidden_whitespace(name, interpolated)
                 safe_servers[name] = interpolated
+        # Rejected native budgets must not be revived by any lower-priority source.
+        rejected = frozenset(n for n in servers if n not in kept and _malformed_cost_table(n, servers[n]) is not None)
         for name, cfg in _filter_suspicious_mcp_servers(_copilot_user_mcp_servers()).items():
-            safe_servers.setdefault(name, _interpolate_env_vars(cfg))  # config.yaml wins
-        _portable_mcp_servers(safe_servers)
+            if name not in rejected:
+                safe_servers.setdefault(name, _interpolate_env_vars(cfg))  # config.yaml wins
+        _portable_mcp_servers(safe_servers, rejected)
         for name, cfg in _filter_suspicious_mcp_servers(_project_mcp_servers()).items():
+            if name in rejected:
+                continue
             if name in safe_servers:  # user config wins
                 logger.debug("User mcp_servers entry '%s' shadows project MCP server", name)
             else:
