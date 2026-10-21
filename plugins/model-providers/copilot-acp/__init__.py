@@ -22,8 +22,7 @@ class CopilotACPProfile(ProviderProfile):
         return CopilotACPClient(**client_kwargs)
 
     def fetch_models(
-        self, *, api_key: str | None = None, base_url: str | None = None,
-        timeout: float = 15.0, launch_spec=None,
+        self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 15.0
     ) -> list[str] | None:
         """Enabled models advertised by a short-lived signed-in ACP session (``session/new``).
 
@@ -35,19 +34,12 @@ class CopilotACPProfile(ProviderProfile):
         from hermes_cli.auth import resolve_external_process_provider_credentials
 
         try:
-            if launch_spec is None:
-                creds = resolve_external_process_provider_credentials(self.name)
-                if not str(creds.get("base_url") or "").startswith("acp://"):
-                    return None
-                client = self.create_client(
-                    api_key=creds.get("api_key"), base_url=creds.get("base_url"),
-                    command=creds.get("command"), args=creds.get("args"))
-            else:
-                client = self.create_client(
-                    api_key="copilot-acp",
-                    base_url=self.base_url,
-                    launch_spec=launch_spec,
-                )
+            creds = resolve_external_process_provider_credentials(self.name)
+            if not str(creds.get("base_url") or "").startswith("acp://"):
+                return None
+            client = self.create_client(
+                api_key=creds.get("api_key"), base_url=creds.get("base_url"),
+                command=creds.get("command"), args=creds.get("args"))
             return client.list_models(timeout_seconds=timeout) or None
         except Exception:
             # Missing CLI (AuthError), refused --acp / failed spawn (RuntimeError), probe
@@ -64,14 +56,7 @@ copilot_acp = CopilotACPProfile(
     # How to launch the CLI; env var names predate this profile (formerly hardcoded in
     # hermes_cli/auth.py), so existing setups keep working.
     process_command="copilot",
-    # Hermes drives Copilot as a pure model backend through its text tool bridge. Copilot's own tools,
-    # MCP servers and skills would otherwise run instead of emitting <tool_call> blocks, and Hermes denies
-    # their permission requests, so the turn ends with no reply. An allowlist naming no real tool disables
-    # every native tool (user MCP servers and the skill tool included). HERMES_COPILOT_ACP_ARGS overrides this.
-    process_args=(
-        "--acp", "--stdio", "--available-tools=hermes_text_tool_bridge_only",
-        "--disable-builtin-mcps", "--no-custom-instructions",
-    ),
+    process_args=("--acp", "--stdio"),
     process_command_env_vars=("HERMES_COPILOT_ACP_COMMAND", "COPILOT_CLI_PATH"),
     process_args_env_var="HERMES_COPILOT_ACP_ARGS",
 )

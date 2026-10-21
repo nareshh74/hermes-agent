@@ -1,3 +1,9 @@
+"""OpenAI-compatible shim that forwards Hermes requests to `copilot --acp`.
+
+Each request starts a short-lived ACP session, sends the formatted conversation
+as one prompt, collects text chunks, and returns the minimal OpenAI-client shape.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -6,6 +12,7 @@ import logging
 import os
 import queue
 import re
+import shlex
 import subprocess
 import tempfile
 import threading
@@ -21,11 +28,6 @@ from agent.acp_openai_bridge import (
     extract_tool_calls_from_text as _extract_tool_calls_from_text,
     render_tool_bridge_sections as _render_tool_bridge_sections,
 )
-from agent.copilot_acp_launcher import (
-    CopilotACPLaunchSpec,
-    probe_acp_support,
-    resolve_copilot_acp_launch_spec,
-)
 from agent.file_safety import (
     get_nt_namespace_error, get_read_block_error, get_write_denied_error, is_write_approval_required)
 from agent.redact import redact_sensitive_text
@@ -40,19 +42,15 @@ _DEFAULT_TIMEOUT_SECONDS = 900.0
 _DEPRECATION_REQUIRED = ("gh-copilot",)
 _DEPRECATION_MARKERS = ("has been deprecated", "no commands will be executed")
 _ROLE_LABELS = {"system": "System", "user": "User", "assistant": "Assistant", "tool": "Tool", "context": "Context"}
+# Probe verdicts per binary path (~50ms --help paid once per process). Only definitive
+# True/False is cached, so a CLI installed mid-session is picked up.
+_ACP_PROBE_CACHE: dict[str, bool] = {}
 _PROMPT_PREAMBLE = (
-    "You are the model backend for Hermes, an agent harness. Hermes owns every tool; your own native tools, "
-    "MCP servers and skills are intentionally disabled in this session, so never call them or report that a tool "
-    "is unavailable.",
-    "To use a Hermes tool, output one <tool_call>{...}</tool_call> block per call, with JSON exactly in OpenAI "
-    "function-call shape, and then stop. Hermes executes the blocks and returns the results in the next turn.",
+    "You are being used as the active ACP agent backend for Hermes.",
+    "Use ACP capabilities to complete tasks.",
+    "IMPORTANT: If you take an action with a tool, you MUST output tool calls using <tool_call>{...}</tool_call> blocks with JSON exactly in OpenAI function-call shape.",
     "If no tool is needed, answer normally.",
 )
-# Copilot CLI announces disabled/unknown tool names as message chunks such as "Info: Unknown tool name in the
-# tool allowlist" before the real reply; they are CLI status, not model output.
-_CLI_TOOL_NOTICE_RE = re.compile(r"\s*Info: [^\n]*\btools?\b[^\n]*\s*\Z")
-# A child gets this long to exit after stdin closes, so Copilot can write its session.shutdown usage record.
-_GRACEFUL_EXIT_SECONDS = 5.0
 _INITIALIZE_PARAMS = {
     "protocolVersion": 1,
     "clientCapabilities": {"fs": {"readTextFile": True, "writeTextFile": True}},
@@ -73,6 +71,43 @@ def _is_gh_copilot_deprecation_message(stderr_text: str) -> bool:
     """True iff stderr looks like the deprecated gh-copilot extension's banner."""
     lower = stderr_text.lower()
     return any(req in lower for req in _DEPRECATION_REQUIRED) and any(m in lower for m in _DEPRECATION_MARKERS)
+
+
+def _resolve_command() -> str:
+    return os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip() or os.getenv("COPILOT_CLI_PATH", "").strip() or "copilot"
+
+
+def _resolve_args() -> list[str]:
+    return shlex.split(os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()) or ["--acp", "--stdio"]
+
+
+def _acp_supported(command: str, args: list[str]) -> bool | None:
+    """Tri-state ``--acp`` probe (a CLI without the flag exits 1 and the parent would wait the
+    full child timeout for stdout that never arrives). True = help advertises --acp; False =
+    help ran cleanly without it (caller fast-fails); None = inconclusive (binary missing /
+    --help failed → normal spawn error). Skipped when ``--acp`` is not in ``args`` (custom transport)."""
+    if "--acp" not in args:
+        return True
+    if (cached := _ACP_PROBE_CACHE.get(command)) is not None:
+        return cached
+    try:
+        probe = subprocess.run(
+            [command, "--help"],
+            # Explicit codec because text=True alone decodes with the
+            # locale default and crashes on non-ASCII help text under
+            # GBK/CP932 locales.
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if probe.returncode != 0:
+        return None
+    # ``--acp`` as a flag token; tolerate spacing and ``[--acp]`` variants.
+    verdict = _ACP_PROBE_CACHE[command] = bool(re.search(r"(?:^|[\s\[])--acp(?:[\s=\],]|$)", probe.stdout, re.MULTILINE))
+    return verdict
 
 
 def _resolve_home_dir() -> str:
@@ -99,11 +134,6 @@ def _build_subprocess_env() -> dict[str, str]:
     env["HOME"] = _resolve_home_dir()
     apply_subprocess_home_env(env)
     return env
-
-
-def _is_cli_notice(text_parts: list[str], chunk_text: str) -> bool:
-    """A one-line Copilot CLI tool notice arriving before any reply text (see ``_CLI_TOOL_NOTICE_RE``)."""
-    return not "".join(text_parts).strip() and bool(_CLI_TOOL_NOTICE_RE.match(chunk_text))
 
 
 def _jsonrpc_result(message_id: Any, result: Any) -> dict[str, Any]:
@@ -162,23 +192,6 @@ def _model_selection_request(session: dict[str, Any], requested_model: str) -> t
         return "session/set_config_option", {"sessionId": session_id, "configId": str(option.get("id") or "model"), "value": requested_model}
     available = _legacy_session_model_ids(session)
     return None if available and requested_model not in available else ("session/set_model", {"sessionId": session_id, "modelId": requested_model})
-
-
-def _completion_usage(acp_usage: Any) -> SimpleNamespace:
-    """OpenAI chat usage from the ACP ``session/prompt`` result usage (Copilot's inputTokens include cache reads
-    and writes, matching OpenAI's prompt_tokens)."""
-    u = acp_usage if isinstance(acp_usage, dict) else {}
-
-    def n(key: str) -> int:
-        value = u.get(key)
-        return int(value) if isinstance(value, (int, float)) else 0
-
-    prompt, completion = n("inputTokens"), n("outputTokens")
-    return SimpleNamespace(
-        prompt_tokens=prompt, completion_tokens=completion, total_tokens=n("totalTokens") or prompt + completion,
-        prompt_tokens_details=SimpleNamespace(cached_tokens=n("cachedReadTokens"), cache_write_tokens=n("cachedWriteTokens")),
-        completion_tokens_details=SimpleNamespace(reasoning_tokens=n("thoughtTokens")),
-    )
 
 
 def _format_messages_as_prompt(
@@ -275,16 +288,12 @@ class CopilotACPClient:
     def __init__(
         self, *, api_key: str | None = None, base_url: str | None = None, default_headers: dict[str, str] | None = None,
         acp_command: str | None = None, acp_args: list[str] | None = None, acp_cwd: str | None = None, command: str | None = None,
-        args: list[str] | None = None, launch_spec: CopilotACPLaunchSpec | None = None, **_: Any,
+        args: list[str] | None = None, **_: Any,
     ):
         self.api_key, self.base_url = api_key or "copilot-acp", base_url or ACP_MARKER_BASE_URL
         self._default_headers = dict(default_headers or {})
-        self._launch_spec = launch_spec or resolve_copilot_acp_launch_spec(
-            command=acp_command or command,
-            args=acp_args or args,
-        )
-        self._acp_command = self._launch_spec.command
-        self._acp_args = list(self._launch_spec.args)
+        self._acp_command = acp_command or command or _resolve_command()
+        self._acp_args = list(acp_args or args or _resolve_args())
         # The session's workspace, not the process cwd: under the gateway every turn runs in
         # the daemon (or a managed worker) whose own cwd is unrelated to the client's.
         self._acp_cwd = str(Path(acp_cwd or resolve_agent_cwd()).resolve())
@@ -298,14 +307,7 @@ class CopilotACPClient:
         self._active_process_lock = threading.Lock()
 
     @staticmethod
-    def _terminate_process(proc: subprocess.Popen[str], *, graceful_seconds: float = 0.0) -> None:
-        if graceful_seconds > 0:
-            # EOF on stdin ends Copilot's ACP loop; it then flushes session.shutdown and exits by itself.
-            with contextlib.suppress(Exception):
-                proc.stdin.close()
-            with contextlib.suppress(Exception):
-                proc.wait(timeout=graceful_seconds)
-                return
+    def _terminate_process(proc: subprocess.Popen[str]) -> None:
         try:
             proc.terminate()
             proc.wait(timeout=2)
@@ -321,7 +323,7 @@ class CopilotACPClient:
             self._active_processes.discard(proc)
             if not self._active_processes:
                 self.is_closed = True
-        self._terminate_process(proc, graceful_seconds=_GRACEFUL_EXIT_SECONDS)
+        self._terminate_process(proc)
 
     def close(self) -> None:
         with self._active_process_lock:
@@ -335,7 +337,7 @@ class CopilotACPClient:
         tools: list[dict[str, Any]] | None = None, tool_choice: Any = None, stream: bool = False, **_: Any,
     ) -> Any:
         prompt_text = _format_messages_as_prompt(messages or [], model=model, tools=tools, tool_choice=tool_choice)
-        response_text, reasoning, *rest = self._run_prompt(prompt_text, timeout_seconds=_effective_timeout(timeout), model=model)
+        response_text, reasoning = self._run_prompt(prompt_text, timeout_seconds=_effective_timeout(timeout), model=model)
         tool_calls, cleaned_text = _extract_tool_calls_from_text(response_text)
         message = SimpleNamespace(
             content=cleaned_text, tool_calls=tool_calls, reasoning=reasoning or None, reasoning_content=reasoning or None,
@@ -343,7 +345,7 @@ class CopilotACPClient:
         )
         completion = SimpleNamespace(
             choices=[SimpleNamespace(message=message, finish_reason="tool_calls" if tool_calls else "stop")],
-            usage=_completion_usage(rest[0] if rest else None),
+            usage=SimpleNamespace(prompt_tokens=0, completion_tokens=0, total_tokens=0, prompt_tokens_details=SimpleNamespace(cached_tokens=0)),
             model=model or "copilot-acp",
         )
         return _completion_to_stream_chunks(completion) if stream else completion
@@ -351,7 +353,7 @@ class CopilotACPClient:
     def _spawn(self) -> subprocess.Popen[str]:
         # Fast-fail when the CLI rejects --acp (else the parent waits the full child timeout for stdout that
         # never arrives). ``None`` falls through to the spawn's established start error.
-        if probe_acp_support(self._launch_spec) is False:
+        if _acp_supported(self._acp_command, self._acp_args) is False:
             preview = " ".join(self._acp_args[:3]) if self._acp_args else "(none)"
             raise RuntimeError(
                 f"ACP transport not supported by '{self._acp_command}': `{preview}` is rejected as an unknown option. This "
@@ -365,20 +367,13 @@ class CopilotACPClient:
             # Hide the console the CLI child would otherwise flash on Windows (#56747). Hide-only — stdio
             # pipes stay intact for the ACP wire.
             proc = subprocess.Popen(
-                list(self._launch_spec.spawn_argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                [self._acp_command] + self._acp_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding='utf-8', errors='replace', bufsize=1, cwd=self._acp_cwd, env=_build_subprocess_env(),
                 creationflags=windows_hide_flags(),
             )
         except FileNotFoundError as exc:
-            install_hint = (
-                "Install Agency or set copilot_acp.launcher to native"
-                if self._launch_spec.kind == "agency"
-                else "Install GitHub Copilot CLI"
-            )
-            raise RuntimeError(
-                f"Could not start Copilot ACP command '{self._acp_command}'. "
-                f"{install_hint}, or set HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH."
-            ) from exc
+            raise RuntimeError(f"Could not start Copilot ACP command '{self._acp_command}'. Install GitHub Copilot CLI or set "
+                               "HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH.") from exc
         if proc.stdin is None or proc.stdout is None:
             proc.kill()
             raise RuntimeError("Copilot ACP process did not expose stdin/stdout pipes.")
@@ -459,9 +454,7 @@ class CopilotACPClient:
         with self._session(timeout_seconds, allow_file_requests=False) as (session, _):
             return _session_model_ids(session)
 
-    def _run_prompt(
-        self, prompt_text: str, *, timeout_seconds: float, model: str | None = None
-    ) -> tuple[str, str, dict[str, Any] | None]:
+    def _run_prompt(self, prompt_text: str, *, timeout_seconds: float, model: str | None = None) -> tuple[str, str]:
         # The CLI's `--model` spawn flag is deliberately NOT used: `copilot --acp` validates it (unknown id
         # aborts the spawn) but ignores it for the session; the model is applied after session/new instead.
         requested_model = str(model or "").strip()
@@ -478,9 +471,8 @@ class CopilotACPClient:
             text_parts: list[str] = []
             reasoning_parts: list[str] = []
             prompt = {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt_text}]}
-            result = _request("session/prompt", prompt, text_parts=text_parts, reasoning_parts=reasoning_parts) or {}
-            usage = result.get("usage") if isinstance(result, dict) else None
-            return "".join(text_parts), "".join(reasoning_parts), usage
+            _request("session/prompt", prompt, text_parts=text_parts, reasoning_parts=reasoning_parts)
+            return "".join(text_parts), "".join(reasoning_parts)
 
     def _handle_server_message(
         self, msg: dict[str, Any], *, process: subprocess.Popen[str], cwd: str, text_parts: list[str] | None, reasoning_parts: list[str] | None,
@@ -495,8 +487,7 @@ class CopilotACPClient:
             content = update.get("content") or {}
             chunk_text = str(content.get("text") or "") if isinstance(content, dict) else ""
             sinks = {"agent_message_chunk": text_parts, "agent_thought_chunk": reasoning_parts}
-            sink = sinks.get(str(update.get("sessionUpdate") or "").strip())
-            if chunk_text and sink is not None and not (sink is text_parts and _is_cli_notice(text_parts, chunk_text)):
+            if chunk_text and (sink := sinks.get(str(update.get("sessionUpdate") or "").strip())) is not None:
                 sink.append(chunk_text)
             return True
         if process.stdin is None:
