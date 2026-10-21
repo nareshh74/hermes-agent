@@ -250,6 +250,42 @@ describe('capTranscriptHistory', () => {
 })
 
 describe('display.timestamps (#41531)', () => {
+  it.each([false, true])('uses the timestamp setting for user and assistant rows: %s', timestamps => {
+    for (const role of ['user', 'assistant'] as const) {
+      const stdout = new PassThrough()
+      const stdin = new PassThrough()
+      const stderr = new PassThrough()
+      let output = ''
+
+      Object.assign(stdout, { columns: 80, isTTY: false, rows: 24 })
+      Object.assign(stdin, { isTTY: false })
+      Object.assign(stderr, { isTTY: false })
+      stdout.on('data', chunk => {
+        output += chunk.toString()
+      })
+
+      const instance = renderSync(
+        React.createElement(MessageLine, {
+          cols: 80,
+          msg: { createdAt: new Date(2026, 0, 2, 9, 7).getTime() / 1000, role, text: 'timestamp-canary' },
+          t: DEFAULT_THEME,
+          timestamps
+        }),
+        {
+          patchConsole: false,
+          stderr: stderr as NodeJS.WriteStream,
+          stdin: stdin as NodeJS.ReadStream,
+          stdout: stdout as NodeJS.WriteStream
+        }
+      )
+
+      instance.unmount()
+      instance.cleanup()
+      expect(stripAnsi(output)).toContain('timestamp-canary')
+      expect(stripAnsi(output).includes('[09:07]'), role).toBe(timestamps)
+    }
+  })
+
   it('formats a Unix-seconds timestamp as [HH:MM] and rejects garbage', () => {
     const noon = new Date()
     noon.setHours(13, 5, 0, 0)
