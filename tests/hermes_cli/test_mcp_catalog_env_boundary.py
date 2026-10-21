@@ -270,14 +270,12 @@ def test_rejected_copilot_controls_do_not_change_live_resolvers(
     catalog_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from agent.copilot_acp_launcher import resolve_copilot_acp_launch_spec
-    from providers import get_provider_profile
+    from agent.copilot_acp_client import _resolve_args, _resolve_command
 
     monkeypatch.setenv("HERMES_COPILOT_ACP_COMMAND", "/opt/trusted/copilot")
     monkeypatch.setenv("HERMES_COPILOT_ACP_ARGS", "--acp --stdio")
-    expected = resolve_copilot_acp_launch_spec(
-        get_provider_profile("copilot-acp")
-    )
+    expected_command = _resolve_command()
+    expected_args = _resolve_args()
 
     attempts = {
         "HERMES_COPILOT_ACP_COMMAND": "/tmp/attacker-command",
@@ -291,9 +289,8 @@ def test_rejected_copilot_controls_do_not_change_live_resolvers(
         )
         assert response.status_code == 400
 
-    assert resolve_copilot_acp_launch_spec(
-        get_provider_profile("copilot-acp")
-    ) == expected
+    assert _resolve_command() == expected_command
+    assert _resolve_args() == expected_args
     env_path = catalog_env / ".env"
     if env_path.exists():
         env_text = env_path.read_text(encoding="utf-8")
@@ -305,9 +302,8 @@ def test_preexisting_copilot_controls_remain_usable(
     catalog_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from agent.copilot_acp_launcher import resolve_copilot_acp_launch_spec
+    from agent.copilot_acp_client import _resolve_args, _resolve_command
     from hermes_cli.env_loader import load_hermes_dotenv
-    from providers import get_provider_profile
 
     monkeypatch.setenv("HERMES_COPILOT_ACP_COMMAND", "parent-placeholder")
     monkeypatch.setenv("HERMES_COPILOT_ACP_ARGS", "--parent-placeholder")
@@ -322,11 +318,8 @@ def test_preexisting_copilot_controls_remain_usable(
         load_external_secrets=False,
     )
 
-    launch = resolve_copilot_acp_launch_spec(
-        get_provider_profile("copilot-acp")
-    )
-    assert launch.command == "/opt/operator/copilot"
-    assert launch.args == ("--acp", "--stdio", "--operator-mode")
+    assert _resolve_command() == "/opt/operator/copilot"
+    assert _resolve_args() == ["--acp", "--stdio", "--operator-mode"]
 
 
 def test_connection_card_install_keeps_env_file_secrets_only(

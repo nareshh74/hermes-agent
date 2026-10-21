@@ -217,7 +217,7 @@ def test_run_prompt_preserves_real_home_when_profile_home_available(monkeypatch,
     # Hermeticity: the --acp support probe (PR #87308) calls subprocess.run
     # before Popen; stub it inconclusive so no real CLI on the host box can
     # flip the resolution this test asserts.
-    with _patch("agent.copilot_acp_launcher.subprocess.run", side_effect=FileNotFoundError):
+    with _patch("agent.copilot_acp_client.subprocess.run", side_effect=FileNotFoundError):
         with _patch("agent.copilot_acp_client.subprocess.Popen", side_effect=_fake_popen_capture(captured)):
             with pytest.raises(RuntimeError, match="Could not start Copilot ACP command"):
                 client._run_prompt("hello", timeout_seconds=1)
@@ -236,7 +236,7 @@ def test_run_prompt_passes_home_when_parent_env_is_clean(monkeypatch, tmp_path):
     # Hermeticity: the --acp support probe (PR #87308) calls subprocess.run
     # before Popen; stub it inconclusive so no real CLI on the host box can
     # flip the resolution this test asserts.
-    with _patch("agent.copilot_acp_launcher.subprocess.run", side_effect=FileNotFoundError):
+    with _patch("agent.copilot_acp_client.subprocess.run", side_effect=FileNotFoundError):
         with _patch("agent.copilot_acp_client.subprocess.Popen", side_effect=_fake_popen_capture(captured)):
             with pytest.raises(RuntimeError, match="Could not start Copilot ACP command"):
                 client._run_prompt("hello", timeout_seconds=1)
@@ -249,7 +249,7 @@ def test_run_prompt_passes_home_when_parent_env_is_clean(monkeypatch, tmp_path):
 
 import subprocess as _subprocess
 
-from agent.copilot_acp_launcher import _ACP_PROBE_CACHE, probe_acp_support
+from agent.copilot_acp_client import _ACP_PROBE_CACHE, _acp_supported
 
 
 @pytest.fixture(autouse=True)
@@ -265,16 +265,16 @@ def _completed(returncode=0, stdout=""):
 
 def test_probe_true_when_help_advertises_acp():
     with _patch(
-        "agent.copilot_acp_launcher.subprocess.run",
+        "agent.copilot_acp_client.subprocess.run",
         return_value=_completed(stdout="Usage: copilot [--acp] [--stdio]"),
     ):
-        assert probe_acp_support(_make_home_client(Path("/tmp"))._launch_spec) is True
+        assert _acp_supported("copilot", ["--acp", "--stdio"]) is True
 
 
 def test_probe_false_when_help_lacks_acp_and_run_prompt_fast_fails(tmp_path):
     client = _make_home_client(tmp_path)
     with _patch(
-        "agent.copilot_acp_launcher.subprocess.run",
+        "agent.copilot_acp_client.subprocess.run",
         return_value=_completed(stdout="Usage: claude [--print] [--model]"),
     ):
         with pytest.raises(RuntimeError, match="ACP transport not supported"):
@@ -285,7 +285,7 @@ def test_probe_inconclusive_falls_through_to_spawn_error(tmp_path):
     """Missing binary: probe must NOT mask the established spawn error."""
     client = _make_home_client(tmp_path)
     with _patch(
-        "agent.copilot_acp_launcher.subprocess.run",
+        "agent.copilot_acp_client.subprocess.run",
         side_effect=FileNotFoundError("copilot not found"),
     ):
         with _patch(
@@ -301,13 +301,8 @@ def test_probe_inconclusive_falls_through_to_spawn_error(tmp_path):
 
 
 def test_probe_skipped_for_custom_args_without_acp():
-    client = CopilotACPClient(
-        command="mycli",
-        args=["--custom-transport"],
-        acp_cwd="/tmp",
-    )
-    with _patch("agent.copilot_acp_launcher.subprocess.run") as run_mock:
-        assert probe_acp_support(client._launch_spec) is True
+    with _patch("agent.copilot_acp_client.subprocess.run") as run_mock:
+        assert _acp_supported("mycli", ["--custom-transport"]) is True
     run_mock.assert_not_called()
 
 
@@ -593,55 +588,3 @@ def test_cli_death_is_reported_as_a_crash_not_a_timeout(tmp_path):
         assert "exited early: fatal: agent segfaulted" in str(exc)
     else:
         raise AssertionError("session on a dead CLI must raise")
-
-
-_USAGE_ACP_SERVER = """import json
-import sys
-from pathlib import Path
-
-for line in sys.stdin:
-    request = json.loads(line)
-    method = request.get("method")
-    result = {}
-    if method == "initialize":
-        result = {"protocolVersion": 1}
-    elif method == "session/new":
-        result = {"sessionId": "s1"}
-    elif method == "session/prompt":
-        for text in ("Info: Unknown tool name in the tool allowlist", "Info: the answer", " is 42"):
-            print(json.dumps({"jsonrpc": "2.0", "method": "session/update", "params": {
-                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": text}},
-            }}), flush=True)
-        result = {"stopReason": "end_turn", "usage": {
-            "inputTokens": 3430, "outputTokens": 183, "totalTokens": 3613, "thoughtTokens": 129,
-            "cachedReadTokens": 1250, "cachedWriteTokens": 2177}}
-    print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
-# stdin EOF: a graceful shutdown, like Copilot writing session.shutdown.
-Path(sys.argv[1]).write_text("shutdown", encoding="utf-8")
-"""
-
-
-def test_prompt_reports_acp_usage_strips_cli_notices_and_shuts_child_down_gracefully(tmp_path):
-    from agent.usage_pricing import normalize_usage
-
-    server = tmp_path / "usage_acp.py"
-    server.write_text(_USAGE_ACP_SERVER, encoding="utf-8")
-    marker = tmp_path / "shutdown.txt"
-    client = CopilotACPClient(command=sys.executable, args=[str(server), str(marker)], acp_cwd=str(tmp_path))
-
-    completion = client._create_chat_completion(model="copilot-acp", messages=[{"role": "user", "content": "hi"}])
-
-    assert completion.choices[0].message.content == "Info: the answer is 42"
-    usage = normalize_usage(completion.usage, provider="copilot-acp", api_mode="chat_completions")
-    assert (usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_write_tokens,
-            usage.reasoning_tokens) == (3430 - 1250 - 2177, 183, 1250, 2177, 129)
-    assert marker.read_text(encoding="utf-8") == "shutdown", "child must exit on stdin EOF, not be terminated"
-
-
-def test_default_launch_disables_copilot_native_tools_for_every_launcher():
-    from agent.copilot_acp_launcher import resolve_copilot_acp_launch_spec
-
-    for launcher in ("native", "agency"):
-        args = resolve_copilot_acp_launch_spec(config={"copilot_acp": {"launcher": launcher}}, env={}).args
-        assert "--disable-builtin-mcps" in args and "--no-custom-instructions" in args, launcher
-        assert any(a.startswith("--available-tools=") for a in args), launcher
