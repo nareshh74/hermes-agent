@@ -1317,6 +1317,7 @@
   "userMessages.promptTimeout.vaultCode",
   "userMessages.promptTimeout.vaultSaveLogin",
   "userMessages.promptTimeout.vaultUnlockPrompt",
+  "userMessages.rpc.launchCredentialsChanged",
   "userMessages.rpc.notConnected",
   "userMessages.rpc.sessionNotFound",
   "userMessages.rpc.shellBackendRefused",
