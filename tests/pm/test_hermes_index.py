@@ -180,9 +180,9 @@ def test_locked_project_build_syncs_a_relocked_copy(clean_index_env, tmp_path, m
     (project / "uv.lock").write_text(LOCK, encoding="utf-8")
     seen = _fake_uv(monkeypatch, _relocked)
     import pm.environment
-    monkeypatch.setattr(pm.environment, "_run_streaming", lambda command, **kwargs: subprocess.run(command, **kwargs))
+    monkeypatch.setattr(pm.environment, "_run_streaming", lambda command, **kwargs: subprocess.run(command, check=False, **kwargs))
     monkeypatch.setattr("pm._uv._toolchain", lambda **kwargs: (tmp_path / "uv", tmp_path / "python"))
-    monkeypatch.setattr("pm.environment.PythonEnvironment.check", lambda self: None)
+    monkeypatch.setattr("pm.environment.PythonEnvironment.check", lambda self, lock=None: None)
 
     build_environment(source=project, out=tmp_path / "venv", no_install_project=True, explicit=True)
 

@@ -71,7 +71,7 @@ def build_environment(
         cache=Path(cache) if cache is not None else None, env=env,
         offline=offline, explicit=explicit, output=sys.stderr,
     )
-    with _fresh_build(environment, sealed=sealed):
+    with _fresh_build(environment, sealed=sealed, lock=source / "uv.lock"):
         if frozen and no_install_project and hermes_index_url(environment.env) and _manifests_suffice(source):
             # Re-point a private copy of the lock (never the checkout's). Only the
             # manifests are needed: the project itself is not installed.
