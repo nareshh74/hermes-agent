@@ -1318,6 +1318,7 @@
   "userMessages.promptTimeout.vaultSaveLogin",
   "userMessages.promptTimeout.vaultUnlockPrompt",
   "userMessages.rpc.launchCredentialsChanged",
+  "userMessages.rpc.methodUnavailable",
   "userMessages.rpc.notConnected",
   "userMessages.rpc.sessionHasChildren",
   "userMessages.rpc.sessionNotFound",
