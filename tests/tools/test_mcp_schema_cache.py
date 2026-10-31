@@ -162,3 +162,9 @@ class TestWriteThroughPreservesSchema:
         assert schema is not None, "lazy path did not register the tool"
         assert set(schema["parameters"].get("properties", {})) == {"query", "model"}
         assert schema["parameters"].get("required") == ["query", "model"]
+
+
+def test_ttl_zero_means_no_expiry(monkeypatch, tmp_path):
+    monkeypatch.setattr(msc, "_cache_path", lambda: tmp_path / "cache.json")
+    msc.write_cache_entry("s", "fp", tools=[], ttl_ms=0)
+    assert msc.get_cached_entry("s", "fp") is not None
