@@ -7,6 +7,7 @@ Env: FIRECRAWL_API_KEY, FIRECRAWL_API_URL (self-hosted), FIRECRAWL_GATEWAY_URL /
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -113,11 +114,15 @@ class _KeylessFirecrawlClient:
     """Minimal REST client for Firecrawl's keyless cloud mode; duck-types the SDK's
     ``search`` / ``scrape`` and never sends an Authorization header."""
 
-    def __init__(self, api_url: str = _FIRECRAWL_CLOUD_API_URL):
+    def __init__(self, api_url: str = _FIRECRAWL_CLOUD_API_URL, api_key: Optional[str] = None):
         self.api_url = api_url.rstrip("/")
+        self.api_key = api_key
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = httpx.post(f"{self.api_url}{path}", json=payload, headers={"Content-Type": "application/json"}, timeout=60.0)
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        response = httpx.post(f"{self.api_url}{path}", json=payload, headers=headers, timeout=60.0)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -216,7 +221,13 @@ def _get_firecrawl_client(capability: Optional[str] = None) -> Any:
     cached = getattr(wt, "_firecrawl_client", None)
     if cached is not None and getattr(wt, "_firecrawl_client_config", None) == client_config:
         return cached
-    wt._firecrawl_client = _KeylessFirecrawlClient(api_url=kwargs["api_url"]) if client_mode == "keyless" else Firecrawl(**kwargs)
+    if client_mode == "keyless":
+        wt._firecrawl_client = _KeylessFirecrawlClient(api_url=kwargs["api_url"])
+    elif _FIRECRAWL_CLS_CACHE is None and importlib.util.find_spec("firecrawl") is None:
+        # SDK absent: use the REST client instead of triggering a mid-call venv sync.
+        wt._firecrawl_client = _KeylessFirecrawlClient(api_url=kwargs.get("api_url") or _FIRECRAWL_CLOUD_API_URL, api_key=kwargs.get("api_key"))
+    else:
+        wt._firecrawl_client = Firecrawl(**kwargs)
     wt._firecrawl_client_config = client_config
     return wt._firecrawl_client
 
