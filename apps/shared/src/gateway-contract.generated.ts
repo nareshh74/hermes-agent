@@ -3526,6 +3526,12 @@ export interface SessionUndoParams {
 export type UndoIntent = 'retry' | 'undo'
 export interface SessionUndoResult {
   removed: number
+  undo_hint?: UndoRollbackHint | null
+}
+/** ``/undo``'s line naming the files the undone turns changed and pointing at ``/rollback``: ``files`` are the changed paths, ``text`` is the rendered line in the backend's language. */
+export interface UndoRollbackHint {
+  files?: string[]
+  text: string
 }
 export interface SessionSaveParams {
   session_id: string
@@ -3961,10 +3967,13 @@ export interface ConfigSection {
 export interface RollbackListParams {
   session_id: string
   profile?: string | null
+  undo_since?: number | null
+  undo_message_id?: number | null
 }
 export interface RollbackListResult {
   enabled: boolean
   checkpoints?: RollbackCheckpoint[]
+  undo_hint?: UndoRollbackHint | null
 }
 export interface RollbackCheckpoint {
   hash?: string
