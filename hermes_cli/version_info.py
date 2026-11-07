@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,14 +60,18 @@ def _derived_version(
 
 
 def _run_git(repo_dir: Path, *args: str) -> str | None:
+    # stdout goes to a temp file, not a pipe: on Windows ``git.exe`` is a launcher whose child can outlive the
+    # timeout kill, and subprocess.run() then waits on the pipe until that child exits (an ACP/TUI start stalls).
     try:
-        result = subprocess.run(
-            ["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3, cwd=str(repo_dir),
-            check=False,
-        )
+        with tempfile.TemporaryFile() as out:
+            result = subprocess.run(
+                ["git", *args], stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.DEVNULL, timeout=3, cwd=str(repo_dir),
+                check=False,
+            )
+            out.seek(0)
+            value = out.read().decode("utf-8", "replace").strip()
     except (OSError, subprocess.SubprocessError):
         return None
-    value = (result.stdout or "").strip()
     return value if result.returncode == 0 and value else None
 
 
