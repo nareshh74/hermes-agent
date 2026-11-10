@@ -1481,6 +1481,17 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             snapshot = _otr_state.conversation.one_turn_restore
             _otr_state.conversation.one_turn_restore = None
             self._restore_session_model_override(session_key, snapshot)
+            # The one-turn switch note was persisted with the temporary turn. Add a
+            # one-shot counterpart so the next model does not treat that historical
+            # note as its current identity. The restored model may come from config,
+            # so avoid guessing its display name here.
+            pending_notes = getattr(self, "_pending_model_notes", None)
+            if not isinstance(pending_notes, dict):
+                pending_notes = self._pending_model_notes = {}
+            pending_notes[session_key] = (
+                "[Note: the one-turn model override has ended. The temporary model "
+                "no longer applies; use the current model and provider in your instructions.]"
+            )
         except Exception:
             logger.debug("Failed to restore one-turn model override", exc_info=True)
 
@@ -1665,9 +1676,10 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             # must still tell the agent the file exists.
             display_name, agent_path = cls._inbound_attachment_display_name(
                 path, names[i] if i < len(names) else "")
+            # Only an adapter that injected the text says so; an unflagged file (LINE, Signal, ...) is not inlined.
             inline_flag = inline_flags[i] if i < len(inline_flags) else None
             context_note = _build_document_context_note(
-                display_name, agent_path, mtype, content_inlined=inline_flag is not False,
+                display_name, agent_path, mtype, content_inlined=inline_flag is True,
             )
             message_text = f"{context_note}\n\n{message_text}"
         return message_text
