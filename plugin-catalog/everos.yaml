@@ -1,0 +1,33 @@
+name: everos
+title: EverOS Memory
+repo: https://github.com/nareshh74/Plugins
+sha: 673280652bb5350d9337a5ebc9ae63a166a3b6ec
+subdir: hermes
+version: "1.1.0"
+description: >-
+  Native EverOS long-term memory provider for Hermes Agent: automatic hybrid
+  (BM25 + vector + scalar) recall, background turn and trajectory capture,
+  cross-harness shared recall scope, CWD project-context query augmentation,
+  slash-command noise filtering, and optional everos_recall / everos_retain
+  tools. Disclosure — recall queries, completed conversation turns (including
+  tool calls/results), native memory edits, and delegation summaries are sent to
+  the configured EverOS server URL (http://127.0.0.1:8000 by default). When
+  EverOS is not running, initialize() attempts to auto-start the local EverOS
+  server in a background child process via start_cmd (default "everos server
+  start"). Non-secret configuration is stored in $HERMES_HOME/everos.json. No
+  telemetry or self-updater is included.
+maintainer: nareshh74
+tier: community
+category: memory
+requires_hermes: ">=0.19.0"
+docs_url: https://github.com/nareshh74/Plugins/blob/673280652bb5350d9337a5ebc9ae63a166a3b6ec/hermes/README.md
+readme: true
+platforms:
+  - linux
+  - macos
+  - windows
+capabilities:
+  provides_tools: []
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []
