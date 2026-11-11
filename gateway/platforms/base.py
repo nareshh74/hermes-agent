@@ -519,9 +519,9 @@ def validate_inbound_media_size(
         raise ValueError(f"Inbound {media_type} payload is too large ({size} bytes > {limit} bytes)")
 
 
-async def _read_httpx_body_with_limit(response, *, media_type: str) -> bytes:
-    """Read an httpx streaming body under the media cap: reject an oversized ``Content-Length``
-    early, then re-check the running total per chunk (a lying/absent header can't smuggle more)."""
+async def read_httpx_body_with_limit(response, *, media_type: str, body=None) -> bytes:
+    """Read an httpx streaming body (aiohttp: ``body=resp.content.iter_chunked(n)``) under the media
+    cap: reject an oversized ``Content-Length`` early, then re-check the running total per chunk."""
     max_bytes = get_inbound_media_max_bytes()
     content_length = response.headers.get("content-length")
     if content_length:
@@ -533,7 +533,7 @@ async def _read_httpx_body_with_limit(response, *, media_type: str) -> bytes:
             validate_inbound_media_size(declared_size, media_type=media_type, max_bytes=max_bytes)
     chunks: list[bytes] = []
     total = 0
-    async for chunk in response.aiter_bytes():
+    async for chunk in (response.aiter_bytes() if body is None else body):
         total += len(chunk)
         validate_inbound_media_size(total, media_type=media_type, max_bytes=max_bytes)
         chunks.append(chunk)
@@ -653,7 +653,7 @@ async def _cache_media_from_url(url: str, ext: str, retries: int, *, media_type:
             try:
                 async with client.stream("GET", url, headers=headers) as response:
                     response.raise_for_status()
-                    content = await _read_httpx_body_with_limit(response, media_type=media_type)
+                    content = await read_httpx_body_with_limit(response, media_type=media_type)
                 return await asyncio.to_thread(cache_fn, content, ext)
             except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 429:
@@ -1066,9 +1066,7 @@ def validate_media_delivery_path(path: str, session_key: str = "") -> Optional[s
     if not expanded.is_absolute():
         return None
     # Docker agents emit MEDIA:/workspace/... — map container paths to host paths first.
-    resolved = _translate_docker_container_media_path(expanded, session_key=session_key)
-    if resolved is None:
-        resolved = _resolve_path(expanded, strict=True)
+    resolved = _translate_docker_container_media_path(expanded, session_key=session_key) or _resolve_path(expanded, strict=True)
     if resolved is None or not resolved.is_file():
         return None
     # Cache / operator allowlist is trusted unconditionally, regardless of mode.
@@ -4352,6 +4350,8 @@ class BasePlatformAdapter(_SessionModelSettingsMixin, ABC):
             if not is_ephemeral_response:
                 local_files, text_content = self.extract_local_files(text_content)
                 local_files = self.filter_local_delivery_paths(local_files, session_key=session_key)
+            from gateway.platforms.docker_media_paths import hand_back_unreadable_media
+            await hand_back_unreadable_media([p for p, _ in media_files] + local_files)
         history = (await self._bounded_history_media_paths_for_session(session_key)
                    if local_files else None)
         if history:

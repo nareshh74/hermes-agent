@@ -264,7 +264,8 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         with suppress(Exception):
             _estop_key = self._session_key_for_source(source)
             _estop_state = self._peek_session_state(_estop_key)
-            if _estop_state is not None and _estop_state.persistent.update_prompt_pending:
+            if _estop_state is not None and _estop_state.persistent.update_prompt_pending \
+                    and not self._hm_update_reply_refused(event):
                 return True
             # A running session covers steering plus pending clarify / tool approvals it holds.
             if self._is_session_running(_estop_key):
@@ -317,6 +318,14 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
             return str(e)
         return None
 
+    def _hm_update_reply_refused(self, event: MessageEvent) -> bool:
+        """Whether *event*'s sender may not answer the pending ``/update`` prompt (not its opener nor
+        an admin of the chat scope): their message is ordinary chat, never the update answer."""
+        from gateway.approval_actor import update_prompt_refusal
+        from gateway.slash_access import policy_for_runner_source
+        return update_prompt_refusal(event.user_id or event.source.user_id,
+                                     admin_ids=policy_for_runner_source(self, event.source).admin_user_ids) is not None
+
     def _hm_update_prompt_reply(self, event: MessageEvent, _quick_key: str) -> Optional[str]:
         """Consume a reply to a pending ``/update`` prompt (routed to the detached update process via
         ``.update_response``); None when nothing was consumed. Recognized slash commands must bypass
@@ -324,6 +333,8 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         _up_state = self._peek_session_state(_quick_key)
         if _up_state is None or not _up_state.persistent.update_prompt_pending:
             return None
+        if self._hm_update_reply_refused(event):
+            return None  # another member's message in a shared chat: an ordinary message, not the answer
         # Accept /approve and /deny as shorthand for yes/no
         cmd = event.get_command()
         _recognized_cmd = None
@@ -451,8 +462,9 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         return refusal_text(requester) if requester else None
 
     def _prompt_admin_ids(self, event: MessageEvent):
+        """The answer policy of the chat *event* arrived in (admins + its slash floor)."""
         from gateway.slash_access import policy_for_runner_source
-        return policy_for_runner_source(self, event.source).admin_user_ids
+        return policy_for_runner_source(self, event.source)
 
     async def _release_pending_clarify(self, pending, source) -> bool:
         """Withdraw *pending* as CANCELLED and retire its card; False if it already settled.
@@ -1830,7 +1842,10 @@ class GatewayInboundMixin(GatewayInboundHooksMixin, GatewayInboundTranscriptionM
         return await self._prepare_inbound_message_text(**kwargs)
 
     async def _prepare_clarify_reply_text(self, event) -> str:
-        """Return raw text or successful voice transcripts for a clarify reply."""
+        """Raw text or successful voice transcripts. A typed reply to a voice note answers with the typed
+        text the adapter recorded: the replied-to speech and its attachment note are context only."""
+        if typed := getattr(event, "_telegram_replied_voice_typed_text", None):  # adapter-private
+            return typed
         if not self._pending_event_audio_paths(event):
             return (event.text or "").strip()
         _, successful_transcripts = await self._transcribe_pending_audio_event_once(event, "")
