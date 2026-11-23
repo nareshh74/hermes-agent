@@ -6,6 +6,7 @@ rows against the current context: same cwd > same git repo root > same branch > 
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -15,7 +16,17 @@ from typing import Any
 
 _INTERNAL_SOURCES = ("kanban", "tool", "oneshot")
 _PER_DB_LIMIT = 200
+_CONTENT_JSON_PREFIX = "\x00json:"
 logger = logging.getLogger(__name__)
+
+
+def _decode_content(content: Any) -> Any:
+    if isinstance(content, str) and content.startswith(_CONTENT_JSON_PREFIX):
+        try:
+            return json.loads(content[len(_CONTENT_JSON_PREFIX):])
+        except ValueError:
+            return content
+    return content
 
 
 def _norm(path: str | None) -> str:
@@ -40,9 +51,12 @@ def current_context(cwd: str | None = None) -> dict[str, str]:
 
     def _git(*args: str) -> str:
         try:
-            out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=5)
+            out = subprocess.run(
+                ["git", *args], cwd=cwd, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5, check=False,
+            )
             return out.stdout.strip() if out.returncode == 0 else ""
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             return ""
 
     return {"cwd": cwd, "git_repo_root": _normalize_git_bash_path(_git("rev-parse", "--show-toplevel")) or "",
@@ -69,7 +83,6 @@ def _read_db(profile: str, db: Path) -> list[dict[str, Any]]:
 
 def _query_db(profile: str, uri: str) -> list[dict[str, Any]]:
     from hermes_cli.cli_agent_setup_mixin import _user_display_text
-    from hermes_state import SessionDB
 
     conn = sqlite3.connect(uri, uri=True, timeout=2)
     conn.row_factory = sqlite3.Row
@@ -89,7 +102,7 @@ def _query_db(profile: str, uri: str) -> list[dict[str, Any]]:
     finally:
         conn.close()
     return [{**dict(r), "profile": profile,
-             "preview": _user_display_text(SessionDB._decode_content(r["preview"]))[:60] or None}
+             "preview": _user_display_text(_decode_content(r["preview"]))[:60] or None}
             for r in rows]
 
 

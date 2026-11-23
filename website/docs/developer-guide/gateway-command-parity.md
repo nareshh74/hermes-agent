@@ -51,7 +51,7 @@ handler does; `client-local (cli_only)` commands are terminal/UI features of a c
 | `/copy` | refused | HermesCLI._handle_copy_command | local | unavailable: terminal | slash.exec: refused | client-local (cli_only) |
 | `/cron` | read (bare / `list`; add/edit/pause/resume/run/remove control, from the classic CLI's own command socket only) | HermesCLI._handle_cron_command | slash.exec | unavailable: terminal | slash.exec | client-local (cli_only) |
 | `/curator` | control | HermesCLI._handle_curator_command | slash.exec | unavailable: advanced | slash.exec |  |
-| `/debug` | control | HermesCLI._handle_debug_command | slash.exec | slash.exec | slash.exec | uploads logs to a public paste |
+| `/debug` | control | HermesCLI._handle_debug_command | slash.exec | slash.exec | slash.exec | `/debug upload` uploads a summary to a public paste (bare `/debug` is the privacy notice) |
 | `/deny` | control | messaging-only: unknown command | slash.exec | slash.exec | slash.exec | messaging-only |
 | `/diff` | read | HermesCLI._handle_diff_command | slash.exec | slash.exec | slash.exec |  |
 | `/discard` | refused | HermesCLI._handle_discard_command | slash.exec: refused | slash.exec: refused | prompt.resolve_unknown |  |
@@ -99,7 +99,7 @@ handler does; `client-local (cli_only)` commands are terminal/UI features of a c
 | `/reload` | refused | HermesCLI._cmd_reload | canonical route | unavailable: terminal | slash.exec: refused | client-local (cli_only) |
 | `/reload-mcp` (/reload_mcp) | refused | HermesCLI._confirm_and_reload_mcp | canonical route | unavailable: advanced | slash.exec: refused |  |
 | `/reload-skills` (/reload_skills) | refused | HermesCLI._cmd_reload_skills | commands.catalog, skills.reload | unavailable: advanced | slash.exec: refused |  |
-| `/restart` | refused | messaging-only: unknown command | slash.exec: refused | unavailable: terminal | slash.exec: refused | messaging-only |
+| `/restart` | refused | HermesCLI._cmd_restart | local | unavailable: terminal | slash.exec: refused |  |
 | `/resume` | refused | HermesCLI._handle_resume_command | local | picker: session | slash.exec: refused | switches the messaging chat's session; local clients resume by id |
 | `/retry` | refused | HermesCLI._cmd_retry | canonical route | action: retry | session.mutate rewind + resubmit |  |
 | `/review` | control | HermesCLI._handle_review_command | slash.exec | slash.exec | slash.exec |  |
